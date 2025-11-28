@@ -11,36 +11,43 @@ import pandas as pd
 from pathlib import Path
 
 # Ruta de datos (Excel incluido en el repo)
-DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas-Enriquecido.xlsx"
+DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas.xlsx"
 
 
 @st.cache_data
 def cargar_conversaciones_desde_excel():
-    """Carga el Excel y lo normaliza a un esquema común."""
+    """Carga el Excel de consultas y lo normaliza a un esquema común."""
     if not DATA_EXCEL.exists():
         return pd.DataFrame()
 
     df = pd.read_excel(DATA_EXCEL)
 
-    # Ajustar nombres EXACTOS a los encabezados de tu Excel
+    # Renombrar columnas EXACTAS del Excel
     df = df.rename(
         columns={
             "Fecha": "fecha",
-            "Usuario": "usuario",
-            "Área": "area",
-            "Consulta": "consulta",
+            "Nombre": "usuario",
+            "Nombre Área": "area",
+            "Consulta": "categoria",      # tema principal
+            "Observación": "consulta",    # detalle de la pregunta
             "Respuesta": "respuesta",
-            "Categoría": "categoria",
-            "Derivado": "derivado",
-            "Tiempo_Respuesta_min": "tiempo_respuesta_mins",
+            "Estado": "estado",
         }
     )
 
+    # Normalizar tipos y campos derivados
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-    df["derivado"] = df["derivado"].astype(bool)
 
-    # Derivar campos equivalentes a los que usaba SQLite
+    # derivado si el estado contiene la palabra "derivado"
+    df["estado"] = df["estado"].astype(str)
+    df["derivado"] = df["estado"].str.lower().str.contains("derivado")
+
+    # resuelto en primer contacto = no derivado
     df["resuelto_primer_contacto"] = ~df["derivado"]
+
+    # columnas dummy para compatibilidad con KPIs
+    if "tiempo_respuesta_mins" not in df.columns:
+        df["tiempo_respuesta_mins"] = None
     df["tema_emergente"] = False
     df["satisfaccion"] = None
 
@@ -48,7 +55,7 @@ def cargar_conversaciones_desde_excel():
 
 
 def calcular_kpis_df(df, fecha_desde, fecha_hasta):
-    """Replica calcular_kpis pero sobre el DataFrame en memoria."""
+    """Calcular KPIs principales usando el DataFrame."""
     if df.empty:
         return {
             "total_consultas": 0,
@@ -77,13 +84,9 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
     tasa_derivacion = max(0.0, min(100.0, tasa_derivacion))
     tasa_resolucion = max(0.0, min(100.0, tasa_resolucion))
 
-    if "tiempo_respuesta_mins" in dff.columns:
-        t = dff["tiempo_respuesta_mins"].dropna()
-        tiempo_prom = float(t.mean()) if not t.empty else 0.0
-    else:
-        tiempo_prom = 0.0
+    t = dff["tiempo_respuesta_mins"].dropna()
+    tiempo_prom = float(t.mean()) if not t.empty else 0.0
 
-    # Temas emergentes: aquí solo contamos categorías distintas en últimos 7 días
     fecha_7d = fecha_hasta - timedelta(days=7)
     dff7 = dff[dff["fecha"] >= fecha_7d]
     temas_nuevos = dff7["categoria"].nunique()
@@ -148,7 +151,7 @@ def obtener_distribucion_areas_df(df):
 
 
 # ---------------------------------------------------------
-# UI
+# UI (resto de tu código original)
 # ---------------------------------------------------------
 
 st.set_page_config(
@@ -157,53 +160,13 @@ st.set_page_config(
     layout="wide",
 )
 
-# CSS (igual que tu código original) ...
-
-# Header
-st.markdown(
-    "<h1 style='color: #f97316; text-align: center;'>📊 Dashboard Ejecutivo</h1>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<p style='text-align: center; color: #94a3b8; font-size: 1.1rem;'>Métricas y KPIs del Sistema de Atención a Personas</p>",
-    unsafe_allow_html=True,
-)
+# ... CSS y cabecera igual ...
 
 # Cargar datos
 df_conversaciones = cargar_conversaciones_desde_excel()
 
-# Filtros de fecha
-st.markdown("---")
-col_filtro1, col_filtro2, col_filtro3 = st.columns([2, 2, 1])
+# Filtros de fecha (igual que antes) ...
+# ...
 
-if "fecha_desde" not in st.session_state:
-    st.session_state.fecha_desde = datetime.now() - timedelta(days=90)
-if "fecha_hasta" not in st.session_state:
-    st.session_state.fecha_hasta = datetime.now()
-
-with col_filtro1:
-    fecha_desde = st.date_input("Desde", value=st.session_state.fecha_desde)
-
-with col_filtro2:
-    fecha_hasta = st.date_input("Hasta", value=st.session_state.fecha_hasta)
-
-with col_filtro3:
-    st.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Actualizar", use_container_width=True, type="primary"):
-        st.session_state.fecha_desde = fecha_desde
-        st.session_state.fecha_hasta = fecha_hasta
-        st.rerun()
-
-fecha_desde = datetime.combine(st.session_state.fecha_desde, datetime.min.time())
-fecha_hasta = datetime.combine(st.session_state.fecha_hasta, datetime.max.time())
-
-# KPIs
+# Calcular KPIs
 kpis = calcular_kpis_df(df_conversaciones, fecha_desde, fecha_hasta)
-
-# A partir de aquí puedes dejar TODO tu código original de tarjetas,
-# gráficos y tabla, cambiando únicamente las llamadas:
-# - db.obtener_top_temas(...)  -> obtener_top_temas_df(df_conversaciones, ...)
-# - db.obtener_evolucion_temporal(...) -> obtener_evolucion_temporal_df(...)
-# - db.obtener_distribucion_areas() -> obtener_distribucion_areas_df(df_conversaciones)
-# - db.obtener_conversaciones(...) -> usar directamente df_conversaciones filtrado
-

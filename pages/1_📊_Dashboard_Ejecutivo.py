@@ -10,7 +10,10 @@ from datetime import datetime, timedelta
 import pandas as pd
 from pathlib import Path
 
-# Ruta de datos (Excel incluido en el repo)
+# ---------------------------------------------------------
+# Carga de datos desde Excel
+# ---------------------------------------------------------
+
 DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas.xlsx"
 
 
@@ -38,16 +41,14 @@ def cargar_conversaciones_desde_excel():
     # Normalizar tipos y campos derivados
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
 
-    # derivado si el estado contiene la palabra "derivado"
     df["estado"] = df["estado"].astype(str)
     df["derivado"] = df["estado"].str.lower().str.contains("derivado")
 
-    # resuelto en primer contacto = no derivado
     df["resuelto_primer_contacto"] = ~df["derivado"]
 
-    # columnas dummy para compatibilidad con KPIs
     if "tiempo_respuesta_mins" not in df.columns:
         df["tiempo_respuesta_mins"] = None
+
     df["tema_emergente"] = False
     df["satisfaccion"] = None
 
@@ -93,12 +94,12 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
 
     return {
         "total_consultas": total,
-            "tasa_resolucion_primer_contacto": round(tasa_resolucion, 1),
-            "tiempo_promedio_respuesta_mins": round(tiempo_prom, 1),
-            "temas_emergentes_nuevos": int(temas_nuevos),
-            "tasa_derivacion": round(tasa_derivacion, 1),
-            "consultas_resueltas": int(resueltas),
-            "consultas_derivadas": int(derivados),
+        "tasa_resolucion_primer_contacto": round(tasa_resolucion, 1),
+        "tiempo_promedio_respuesta_mins": round(tiempo_prom, 1),
+        "temas_emergentes_nuevos": int(temas_nuevos),
+        "tasa_derivacion": round(tasa_derivacion, 1),
+        "consultas_resueltas": int(resueltas),
+        "consultas_derivadas": int(derivados),
     }
 
 
@@ -160,7 +161,16 @@ st.set_page_config(
     layout="wide",
 )
 
-# Aquí va tu CSS y cabecera original...
+# Aquí puedes dejar tu CSS original...
+
+st.markdown(
+    "<h1 style='color: #f97316; text-align: center;'>📊 Dashboard Ejecutivo</h1>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<p style='text-align: center; color: #94a3b8; font-size: 1.1rem;'>Métricas y KPIs del Sistema de Atención a Personas</p>",
+    unsafe_allow_html=True,
+)
 
 # Cargar datos
 df_conversaciones = cargar_conversaciones_desde_excel()
@@ -187,16 +197,12 @@ with col_filtro3:
         st.session_state.fecha_hasta = fecha_hasta_input
         st.rerun()
 
-# Fechas finales como datetimes
 fecha_desde = datetime.combine(st.session_state.fecha_desde, datetime.min.time())
 fecha_hasta = datetime.combine(st.session_state.fecha_hasta, datetime.max.time())
 
-# Calcular KPIs
+# KPIs
 kpis = calcular_kpis_df(df_conversaciones, fecha_desde, fecha_hasta)
 
-# A partir de aquí puedes reutilizar tal cual tu código de tarjetas,
-# gráficos y tabla, sustituyendo las llamadas a db.* por:
-# - obtener_top_temas_df(df_conversaciones, ...)
-# - obtener_evolucion_temporal_df(df_conversaciones, ...)
-# - obtener_distribucion_areas_df(df_conversaciones)
-# y para la tabla final usar df_conversaciones filtrado por fecha.
+# A partir de aquí puedes reusar tal cual tus tarjetas, gráficos y tabla,
+# sustituyendo las llamadas originales a db.* por las funciones *_df y por
+# filtrados sobre df_conversaciones.

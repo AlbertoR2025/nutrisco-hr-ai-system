@@ -22,6 +22,11 @@ def cargar_conversaciones_desde_excel():
     if not DATA_EXCEL.exists():
         return pd.DataFrame()
 
+    st.write("DEBUG filas:", len(df_conversaciones))
+if not df_conversaciones.empty:
+    st.write(df_conversaciones.head())
+
+
     try:
         df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
     except Exception:

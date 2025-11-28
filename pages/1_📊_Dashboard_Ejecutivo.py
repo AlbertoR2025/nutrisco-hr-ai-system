@@ -25,14 +25,14 @@ def cargar_conversaciones_desde_excel():
     # Leer siempre la hoja de consultas
     df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
 
-    # Renombrar columnas EXACTAS de esa hoja
+    # Renombrar columnas EXACTAS (fíjate en los espacios)
     df = df.rename(
         columns={
-            "Fecha": "fecha",
-            "Nombre": "usuario",
-            "Nombre Área": "area",
-            "Consulta": "categoria",      # tema principal
-            "Observación": "consulta",    # detalle de la pregunta
+            "Fecha ": "fecha",        # tiene espacio al final
+            "Nombre ": "usuario",     # tiene espacio al final
+            "Área": "area",
+            "Consulta": "categoria",   # tema principal
+            "Observación": "consulta", # detalle de la pregunta
             "Respuesta": "respuesta",
             "Estado": "estado",
         }

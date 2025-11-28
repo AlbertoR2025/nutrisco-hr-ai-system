@@ -17,24 +17,22 @@ DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas.xlsx"
 
 
 @st.cache_data
-df_conversaciones = cargar_conversaciones_desde_excel()
-
-# DEBUG: ver realmente qué llega en la nube
-st.write("Columnas df_conversaciones:", list(df_conversaciones.columns))
-st.write(df_conversaciones.head())
-st.stop()  # detiene la app aquí para que no llegue al KeyError
+def cargar_conversaciones_desde_excel():
+    """Carga la hoja de consultas 'Atención 2025' y la normaliza a un esquema común."""
+    if not DATA_EXCEL.exists():
+        return pd.DataFrame()
 
     # Leer siempre la hoja de consultas
     df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
 
-    # Renombrar columnas EXACTAS (incluye espacios)
+    # Renombrar columnas EXACTAS (incluye espacios al final)
     df = df.rename(
         columns={
-            "Fecha ": "fecha",        # tiene espacio al final
-            "Nombre ": "usuario",     # tiene espacio al final
+            "Fecha ": "fecha",        # espacio al final
+            "Nombre ": "usuario",     # espacio al final
             "Área": "area",
-            "Consulta": "categoria",   # tema principal
-            "Observación": "consulta", # detalle de la pregunta
+            "Consulta": "categoria",
+            "Observación": "consulta",
             "Respuesta": "respuesta",
             "Estado": "estado",
         }
@@ -105,21 +103,23 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
 
 
 def obtener_evolucion_temporal_df(df, fecha_desde, fecha_hasta):
+    """Evolución diaria de consultas en el rango."""
     mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
     dff = df.loc[mask].copy()
     if dff.empty:
-        return pd.DataFrame(columns=["fecha", "Total"])
+        return pd.DataFrame(columns=["Fecha", "Total"])
     out = (
         dff.groupby(dff["fecha"].dt.date)
         .size()
         .reset_index(name="Total")
-        .rename(columns={"fecha": "Fecha"})
     )
+    out = out.rename(columns={"fecha": "Fecha"})
     out["Fecha"] = pd.to_datetime(out["Fecha"])
     return out
 
 
 def obtener_distribucion_areas_df(df, fecha_desde, fecha_hasta):
+    """Distribución de consultas por área en el rango."""
     mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
     dff = df.loc[mask].copy()
     if dff.empty:
@@ -152,9 +152,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Cargar datos
 df_conversaciones = cargar_conversaciones_desde_excel()
 
-# (Opcional) Debug para verificar columnas en la nube
+# (Opcional) Debug, puedes comentarlo luego
 st.write("Columnas df_conversaciones:", list(df_conversaciones.columns))
 st.write(df_conversaciones.head())
 

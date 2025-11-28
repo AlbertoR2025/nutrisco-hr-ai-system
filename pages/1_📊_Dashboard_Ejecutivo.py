@@ -93,12 +93,12 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
 
     return {
         "total_consultas": total,
-        "tasa_resolucion_primer_contacto": round(tasa_resolucion, 1),
-        "tiempo_promedio_respuesta_mins": round(tiempo_prom, 1),
-        "temas_emergentes_nuevos": int(temas_nuevos),
-        "tasa_derivacion": round(tasa_derivacion, 1),
-        "consultas_resueltas": int(resueltas),
-        "consultas_derivadas": int(derivados),
+            "tasa_resolucion_primer_contacto": round(tasa_resolucion, 1),
+            "tiempo_promedio_respuesta_mins": round(tiempo_prom, 1),
+            "temas_emergentes_nuevos": int(temas_nuevos),
+            "tasa_derivacion": round(tasa_derivacion, 1),
+            "consultas_resueltas": int(resueltas),
+            "consultas_derivadas": int(derivados),
     }
 
 
@@ -151,7 +151,7 @@ def obtener_distribucion_areas_df(df):
 
 
 # ---------------------------------------------------------
-# UI (resto de tu código original)
+# UI
 # ---------------------------------------------------------
 
 st.set_page_config(
@@ -160,13 +160,43 @@ st.set_page_config(
     layout="wide",
 )
 
-# ... CSS y cabecera igual ...
+# Aquí va tu CSS y cabecera original...
 
 # Cargar datos
 df_conversaciones = cargar_conversaciones_desde_excel()
 
-# Filtros de fecha (igual que antes) ...
-# ...
+# Filtros de fecha
+st.markdown("---")
+col_filtro1, col_filtro2, col_filtro3 = st.columns([2, 2, 1])
+
+if "fecha_desde" not in st.session_state:
+    st.session_state.fecha_desde = datetime.now() - timedelta(days=90)
+if "fecha_hasta" not in st.session_state:
+    st.session_state.fecha_hasta = datetime.now()
+
+with col_filtro1:
+    fecha_desde_input = st.date_input("Desde", value=st.session_state.fecha_desde)
+
+with col_filtro2:
+    fecha_hasta_input = st.date_input("Hasta", value=st.session_state.fecha_hasta)
+
+with col_filtro3:
+    st.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
+    if st.button("🔄 Actualizar", use_container_width=True, type="primary"):
+        st.session_state.fecha_desde = fecha_desde_input
+        st.session_state.fecha_hasta = fecha_hasta_input
+        st.rerun()
+
+# Fechas finales como datetimes
+fecha_desde = datetime.combine(st.session_state.fecha_desde, datetime.min.time())
+fecha_hasta = datetime.combine(st.session_state.fecha_hasta, datetime.max.time())
 
 # Calcular KPIs
 kpis = calcular_kpis_df(df_conversaciones, fecha_desde, fecha_hasta)
+
+# A partir de aquí puedes reutilizar tal cual tu código de tarjetas,
+# gráficos y tabla, sustituyendo las llamadas a db.* por:
+# - obtener_top_temas_df(df_conversaciones, ...)
+# - obtener_evolucion_temporal_df(df_conversaciones, ...)
+# - obtener_distribucion_areas_df(df_conversaciones)
+# y para la tabla final usar df_conversaciones filtrado por fecha.

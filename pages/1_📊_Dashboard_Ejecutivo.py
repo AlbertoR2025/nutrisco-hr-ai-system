@@ -5,13 +5,12 @@ Vista ejecutiva para jefaturas y equipo RRHH
 
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime, timedelta
 import pandas as pd
 from pathlib import Path
 
 # ---------------------------------------------------------
-# Carga de datos desde Excel
+# CARGA DE DATOS
 # ---------------------------------------------------------
 
 DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas.xlsx"
@@ -43,7 +42,6 @@ def cargar_conversaciones_desde_excel():
 
     df["estado"] = df["estado"].astype(str)
     df["derivado"] = df["estado"].str.lower().str.contains("derivado")
-
     df["resuelto_primer_contacto"] = ~df["derivado"]
 
     if "tiempo_respuesta_mins" not in df.columns:
@@ -103,45 +101,26 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
     }
 
 
-def obtener_top_temas_df(df, fecha_desde, fecha_hasta, limite=10):
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask]
-    if dff.empty:
-        return pd.DataFrame(columns=["categoria", "frecuencia"])
-    return (
-        dff.groupby("categoria")
-        .size()
-        .reset_index(name="frecuencia")
-        .sort_values("frecuencia", ascending=False)
-        .head(limite)
-    )
-
-
-def obtener_evolucion_temporal_df(df, periodo, fecha_desde, fecha_hasta):
+def obtener_evolucion_temporal_df(df, fecha_desde, fecha_hasta):
     mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
     dff = df.loc[mask].copy()
     if dff.empty:
-        return pd.DataFrame(columns=["Periodo", "Total"])
-
-    if periodo == "dia":
-        dff["Periodo"] = dff["fecha"].dt.strftime("%Y-%m-%d")
-        label = "Día"
-    elif periodo == "semana":
-        dff["Periodo"] = dff["fecha"].dt.strftime("%Y-W%W")
-        label = "Semana"
-    else:
-        dff["Periodo"] = dff["fecha"].dt.strftime("%Y-%m")
-        label = "Mes"
-
-    out = dff.groupby("Periodo").size().reset_index(name="Total")
-    out = out.rename(columns={"Periodo": label})
+        return pd.DataFrame(columns=["fecha", "Total"])
+    out = (
+        dff.groupby(dff["fecha"].dt.date)
+        .size()
+        .reset_index(name="Total")
+        .rename(columns={"fecha": "Fecha"})
+    )
+    out["Fecha"] = pd.to_datetime(out["Fecha"])
     return out
 
 
-def obtener_distribucion_areas_df(df):
-    if df.empty:
+def obtener_distribucion_areas_df(df, fecha_desde, fecha_hasta):
+    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
+    dff = df.loc[mask].copy()
+    if dff.empty:
         return pd.DataFrame(columns=["area", "total"])
-    dff = df.copy()
     dff["area"] = dff["area"].fillna("Sin Área")
     return (
         dff.groupby("area")
@@ -161,8 +140,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Aquí puedes dejar tu CSS original...
-
 st.markdown(
     "<h1 style='color: #f97316; text-align: center;'>📊 Dashboard Ejecutivo</h1>",
     unsafe_allow_html=True,
@@ -172,7 +149,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Cargar datos
 df_conversaciones = cargar_conversaciones_desde_excel()
 
 # Filtros de fecha
@@ -200,9 +176,86 @@ with col_filtro3:
 fecha_desde = datetime.combine(st.session_state.fecha_desde, datetime.min.time())
 fecha_hasta = datetime.combine(st.session_state.fecha_hasta, datetime.max.time())
 
-# KPIs
+# ---------------------------------------------------------
+# KPIs PRINCIPALES
+# ---------------------------------------------------------
+
 kpis = calcular_kpis_df(df_conversaciones, fecha_desde, fecha_hasta)
 
-# A partir de aquí puedes reusar tal cual tus tarjetas, gráficos y tabla,
-# sustituyendo las llamadas originales a db.* por las funciones *_df y por
-# filtrados sobre df_conversaciones.
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total consultas", kpis["total_consultas"])
+col2.metric("Resolución 1er contacto", f"{kpis['tasa_resolucion_primer_contacto']:.1f}%")
+col3.metric("Derivadas", kpis["consultas_derivadas"], f"{kpis['tasa_derivacion']:.1f}%")
+col4.metric("Temas emergentes (últ. 7d)", kpis["temas_emergentes_nuevos"])
+
+# ---------------------------------------------------------
+# GRÁFICOS
+# ---------------------------------------------------------
+
+st.markdown("### 📈 Evolución diaria de consultas")
+df_evo = obtener_evolucion_temporal_df(df_conversaciones, fecha_desde, fecha_hasta)
+
+if not df_evo.empty:
+    fig_evo = go.Figure()
+    fig_evo.add_trace(
+        go.Scatter(
+            x=df_evo["Fecha"],
+            y=df_evo["Total"],
+            mode="lines+markers",
+            line=dict(color="#f97316", width=3),
+        )
+    )
+    fig_evo.update_layout(
+        height=350,
+        margin=dict(l=40, r=20, t=30, b=40),
+        xaxis_title="Fecha",
+        yaxis_title="Consultas",
+    )
+    st.plotly_chart(fig_evo, use_container_width=True)
+else:
+    st.info("No hay consultas en el rango seleccionado.")
+
+st.markdown("### 🏢 Distribución por área")
+df_areas = obtener_distribucion_areas_df(df_conversaciones, fecha_desde, fecha_hasta)
+
+if not df_areas.empty:
+    fig_areas = go.Figure(
+        go.Bar(
+            x=df_areas["area"],
+            y=df_areas["total"],
+            marker_color="#fb923c",
+        )
+    )
+    fig_areas.update_layout(
+        height=350,
+        margin=dict(l=40, r=20, t=30, b=80),
+        xaxis_title="Área",
+        yaxis_title="Consultas",
+        xaxis_tickangle=-45,
+    )
+    st.plotly_chart(fig_areas, use_container_width=True)
+else:
+    st.info("No hay datos de áreas para el rango seleccionado.")
+
+# ---------------------------------------------------------
+# TABLA DETALLADA
+# ---------------------------------------------------------
+
+st.markdown("### 📋 Detalle de consultas")
+
+mask = (df_conversaciones["fecha"] >= fecha_desde) & (
+    df_conversaciones["fecha"] <= fecha_hasta
+)
+df_filtrado = df_conversaciones.loc[mask].copy()
+
+if not df_filtrado.empty:
+    st.dataframe(
+        df_filtrado[
+            ["fecha", "usuario", "area", "categoria", "consulta", "respuesta", "estado"]
+        ].sort_values("fecha", ascending=False).head(50),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(f"Mostrando {min(50, len(df_filtrado))} de {len(df_filtrado)} consultas.")
+else:
+    st.info("No hay consultas en el rango de fechas seleccionado.")

@@ -89,9 +89,9 @@ class ChatDatabase:
         if total == 0:
             df = pd.read_excel(DATA_EXCEL)
 
-            # Ajusta estos mapeos según las columnas reales de tu Excel
-            # Ejemplo de mapeo típico:
-            columnas_map = {
+            # Mapeo de columnas del Excel -> columnas de la tabla
+            # AJUSTA los nombres de la izquierda a los encabezados REALES del Excel
+            columnas_excel_a_usar = {
                 "Fecha": "fecha",
                 "Usuario": "usuario",
                 "Área": "area",
@@ -101,9 +101,21 @@ class ChatDatabase:
                 "Derivado": "derivado",
                 "Tiempo_Respuesta_min": "tiempo_respuesta_mins",
             }
-            df = df.rename(columns=columnas_map)
 
-            # Asegurar columnas mínimas
+            # Quedarse solo con las que existen en el Excel
+            cols_presentes = {
+                origen: destino
+                for origen, destino in columnas_excel_a_usar.items()
+                if origen in df.columns
+            }
+
+            if not cols_presentes:
+                conn.close()
+                return
+
+            df = df[list(cols_presentes.keys())].rename(columns=cols_presentes)
+
+            # Completar columnas faltantes requeridas por la tabla
             for col in [
                 "fecha",
                 "usuario",
@@ -113,9 +125,21 @@ class ChatDatabase:
                 "categoria",
                 "derivado",
                 "tiempo_respuesta_mins",
+                "fecha_resolucion",
+                "resuelto_primer_contacto",
+                "tema_emergente",
+                "satisfaccion",
             ]:
                 if col not in df.columns:
                     df[col] = None
+
+            # Normalizar derivado a 0/1
+            if "derivado" in df.columns:
+                df["derivado"] = df["derivado"].astype(bool).astype(int)
+
+            # Normalizar fecha a string ISO si es datetime
+            if "fecha" in df.columns and pd.api.types.is_datetime64_any_dtype(df["fecha"]):
+                df["fecha"] = df["fecha"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
             df.to_sql(
                 "conversaciones",

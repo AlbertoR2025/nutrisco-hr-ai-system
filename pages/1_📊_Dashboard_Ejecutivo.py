@@ -18,13 +18,14 @@ DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas.xlsx"
 
 @st.cache_data
 def cargar_conversaciones_desde_excel():
-    """Carga el Excel de consultas y lo normaliza a un esquema común."""
+    """Carga la hoja de consultas 'Atención 2025' y la normaliza a un esquema común."""
     if not DATA_EXCEL.exists():
         return pd.DataFrame()
 
-    df = pd.read_excel(DATA_EXCEL)
+    # Leer siempre la hoja de consultas
+    df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
 
-    # Renombrar columnas EXACTAS del Excel
+    # Renombrar columnas EXACTAS de esa hoja
     df = df.rename(
         columns={
             "Fecha": "fecha",

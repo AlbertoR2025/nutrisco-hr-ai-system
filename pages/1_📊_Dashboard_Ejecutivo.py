@@ -40,7 +40,6 @@ def cargar_conversaciones_desde_excel():
         }
     )
 
-    # Si no está 'fecha' tras el rename, devolvemos DF vacío para no romper
     if "fecha" not in df.columns:
         return pd.DataFrame()
 

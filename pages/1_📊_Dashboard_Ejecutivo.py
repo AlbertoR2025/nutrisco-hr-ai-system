@@ -22,8 +22,10 @@ def cargar_conversaciones_desde_excel():
     if not DATA_EXCEL.exists():
         return pd.DataFrame()
 
-    # Leer siempre la hoja de consultas
-    df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
+    try:
+        df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
+    except Exception:
+        return pd.DataFrame()
 
     # Renombrar columnas EXACTAS (incluye espacios al final)
     df = df.rename(
@@ -38,15 +40,26 @@ def cargar_conversaciones_desde_excel():
         }
     )
 
-    # Normalizar tipos y campos derivados
+    # Si no está 'fecha' tras el rename, devolvemos DF vacío para no romper
+    if "fecha" not in df.columns:
+        return pd.DataFrame()
+
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
 
-    df["estado"] = df["estado"].astype(str)
-    df["derivado"] = df["estado"].str.lower().str.contains("derivado")
+    if "estado" in df.columns:
+        df["estado"] = df["estado"].astype(str)
+        df["derivado"] = df["estado"].str.lower().str.contains("derivado")
+    else:
+        df["estado"] = ""
+        df["derivado"] = False
+
     df["resuelto_primer_contacto"] = ~df["derivado"]
 
     if "tiempo_respuesta_mins" not in df.columns:
         df["tiempo_respuesta_mins"] = None
+
+    if "categoria" not in df.columns:
+        df["categoria"] = "Sin categoría"
 
     df["tema_emergente"] = False
     df["satisfaccion"] = None
@@ -56,7 +69,7 @@ def cargar_conversaciones_desde_excel():
 
 def calcular_kpis_df(df, fecha_desde, fecha_hasta):
     """Calcular KPIs principales usando el DataFrame."""
-    if df.empty:
+    if df.empty or "fecha" not in df.columns:
         return {
             "total_consultas": 0,
             "tasa_resolucion_primer_contacto": 0.0,
@@ -71,7 +84,7 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
     dff = df.loc[mask].copy()
 
     total = len(dff)
-    derivados = int(dff["derivado"].sum())
+    derivados = int(dff.get("derivado", False).sum()) if total > 0 else 0
     resueltas = total - derivados
 
     if total > 0:
@@ -84,12 +97,12 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
     tasa_derivacion = max(0.0, min(100.0, tasa_derivacion))
     tasa_resolucion = max(0.0, min(100.0, tasa_resolucion))
 
-    t = dff["tiempo_respuesta_mins"].dropna()
+    t = dff.get("tiempo_respuesta_mins", pd.Series(dtype=float)).dropna()
     tiempo_prom = float(t.mean()) if not t.empty else 0.0
 
     fecha_7d = fecha_hasta - timedelta(days=7)
     dff7 = dff[dff["fecha"] >= fecha_7d]
-    temas_nuevos = dff7["categoria"].nunique()
+    temas_nuevos = dff7.get("categoria", pd.Series(dtype=str)).nunique()
 
     return {
         "total_consultas": total,
@@ -104,26 +117,34 @@ def calcular_kpis_df(df, fecha_desde, fecha_hasta):
 
 def obtener_evolucion_temporal_df(df, fecha_desde, fecha_hasta):
     """Evolución diaria de consultas en el rango."""
+    if df.empty or "fecha" not in df.columns:
+        return pd.DataFrame(columns=["Fecha", "Total"])
+
     mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
     dff = df.loc[mask].copy()
     if dff.empty:
         return pd.DataFrame(columns=["Fecha", "Total"])
+
     out = (
         dff.groupby(dff["fecha"].dt.date)
         .size()
         .reset_index(name="Total")
+        .rename(columns={"fecha": "Fecha"})
     )
-    out = out.rename(columns={"fecha": "Fecha"})
     out["Fecha"] = pd.to_datetime(out["Fecha"])
     return out
 
 
 def obtener_distribucion_areas_df(df, fecha_desde, fecha_hasta):
     """Distribución de consultas por área en el rango."""
+    if df.empty or "fecha" not in df.columns:
+        return pd.DataFrame(columns=["area", "total"])
+
     mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
     dff = df.loc[mask].copy()
-    if dff.empty:
+    if dff.empty or "area" not in dff.columns:
         return pd.DataFrame(columns=["area", "total"])
+
     dff["area"] = dff["area"].fillna("Sin Área")
     return (
         dff.groupby("area")
@@ -154,10 +175,6 @@ st.markdown(
 
 # Cargar datos
 df_conversaciones = cargar_conversaciones_desde_excel()
-
-# (Opcional) Debug, puedes comentarlo luego
-st.write("Columnas df_conversaciones:", list(df_conversaciones.columns))
-st.write(df_conversaciones.head())
 
 # Filtros de fecha
 st.markdown("---")
@@ -192,7 +209,10 @@ kpis = calcular_kpis_df(df_conversaciones, fecha_desde, fecha_hasta)
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total consultas", kpis["total_consultas"])
-col2.metric("Resolución 1er contacto", f"{kpis['tasa_resolucion_primer_contacto']:.1f}%")
+col2.metric(
+    "Resolución 1er contacto",
+    f"{kpis['tasa_resolucion_primer_contacto']:.1f}%",
+)
 col3.metric("Derivadas", kpis["consultas_derivadas"], f"{kpis['tasa_derivacion']:.1f}%")
 col4.metric("Temas emergentes (últ. 7d)", kpis["temas_emergentes_nuevos"])
 
@@ -251,16 +271,24 @@ else:
 
 st.markdown("### 📋 Detalle de consultas")
 
-mask = (df_conversaciones["fecha"] >= fecha_desde) & (
-    df_conversaciones["fecha"] <= fecha_hasta
-)
-df_filtrado = df_conversaciones.loc[mask].copy()
+if not df_conversaciones.empty and "fecha" in df_conversaciones.columns:
+    mask = (df_conversaciones["fecha"] >= fecha_desde) & (
+        df_conversaciones["fecha"] <= fecha_hasta
+    )
+    df_filtrado = df_conversaciones.loc[mask].copy()
+else:
+    df_filtrado = pd.DataFrame()
 
 if not df_filtrado.empty:
+    columnas_tabla = [
+        c
+        for c in ["fecha", "usuario", "area", "categoria", "consulta", "respuesta", "estado"]
+        if c in df_filtrado.columns
+    ]
     st.dataframe(
-        df_filtrado[
-            ["fecha", "usuario", "area", "categoria", "consulta", "respuesta", "estado"]
-        ].sort_values("fecha", ascending=False).head(50),
+        df_filtrado[columnas_tabla]
+        .sort_values("fecha", ascending=False)
+        .head(50),
         use_container_width=True,
         hide_index=True,
     )

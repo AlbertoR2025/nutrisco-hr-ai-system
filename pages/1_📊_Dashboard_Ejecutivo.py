@@ -17,17 +17,15 @@ DATA_EXCEL = Path("data") / "Consultas-Atencion-Personas.xlsx"
 
 
 @st.cache_data
-df_conversaciones = cargar_conversaciones_desde_excel()
-
-# DEBUG obligatorio para la nube
-st.write("Columnas df_conversaciones:", list(df_conversaciones.columns))
-st.write(df_conversaciones.head())
-
+def cargar_conversaciones_desde_excel():
+    """Carga la hoja de consultas 'Atención 2025' y la normaliza a un esquema común."""
+    if not DATA_EXCEL.exists():
+        return pd.DataFrame()
 
     # Leer siempre la hoja de consultas
     df = pd.read_excel(DATA_EXCEL, sheet_name="Atención 2025")
 
-    # Renombrar columnas EXACTAS (fíjate en los espacios)
+    # Renombrar columnas EXACTAS (incluye espacios)
     df = df.rename(
         columns={
             "Fecha ": "fecha",        # tiene espacio al final
@@ -153,6 +151,10 @@ st.markdown(
 )
 
 df_conversaciones = cargar_conversaciones_desde_excel()
+
+# (Opcional) Debug para verificar columnas en la nube
+st.write("Columnas df_conversaciones:", list(df_conversaciones.columns))
+st.write(df_conversaciones.head())
 
 # Filtros de fecha
 st.markdown("---")

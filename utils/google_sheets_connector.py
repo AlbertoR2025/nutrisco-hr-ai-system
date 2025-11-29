@@ -11,8 +11,7 @@ class HRSheetsConnector:
         self.df_raw = None
         self.df_clean = None
         
-    @st.cache_resource(show_spinner=False)
-    def connect_to_sheets(_self, credentials_info, spreadsheet_url):
+    def connect_to_sheets(self, credentials_info, spreadsheet_url):
         """Conectar con Google Sheets usando service account"""
         try:
             # Configurar scope
@@ -26,7 +25,7 @@ class HRSheetsConnector:
             client = gspread.authorize(creds)
             
             # Abrir por URL
-            _self.sheet = client.open_by_url(spreadsheet_url).sheet1
+            self.sheet = client.open_by_url(spreadsheet_url).sheet1
             return True
             
         except Exception as e:
@@ -119,7 +118,8 @@ class HRSheetsConnector:
         
         # Aplicar renombrado
         for new_name, old_name in mapping.items():
-            df[new_name] = df[old_name]
+            if old_name in df.columns:
+                df[new_name] = df[old_name]
             
         st.sidebar.write("🗂️ Columnas mapeadas:", mapping)
         return df
@@ -171,7 +171,7 @@ class HRSheetsConnector:
         # Si aún hay fechas vacías, usar fecha actual
         df['fecha_creacion'] = df['fecha_creacion'].fillna(pd.Timestamp.now())
         
-        st.sidebar.write("📅 Fechas procesadas - Mín:", df['fecha_creacion'].min(), "Máx:", df['fecha_creacion'].max())
+        st.sidebar.write("📅 Fechas procesadas - Mín:", df['fecha_creacion'].min().strftime('%d/%m/%Y'), "Máx:", df['fecha_creacion'].max().strftime('%d/%m/%Y'))
         return df
     
     def normalize_categories(self, df):
@@ -283,15 +283,21 @@ class HRSheetsConnector:
         """Obtener datos limpios"""
         return self.df_clean
 
-# Función principal para usar en Streamlit
-@st.cache_resource(show_spinner="Conectando con Google Sheets...")
-def get_hr_data(credentials_info, spreadsheet_url):
-    """Función principal para obtener datos de RRHH"""
-    connector = HRSheetsConnector()
-    
-    if connector.connect_to_sheets(credentials_info, spreadsheet_url):
-        if connector.extract_data():
-            if connector.transform_data():
-                return connector.get_clean_data()
-    
-    return pd.DataFrame()  # Retornar DataFrame vacío en caso de error
+# Función principal para usar en Streamlit - VERSIÓN CORREGIDA
+def get_hr_data(spreadsheet_url):
+    """Función principal para obtener datos de RRHH - Sin cache problemático"""
+    try:
+        # Obtener secrets directamente
+        credentials_info = dict(st.secrets["gcp_service_account"])
+        connector = HRSheetsConnector()
+        
+        if connector.connect_to_sheets(credentials_info, spreadsheet_url):
+            if connector.extract_data():
+                if connector.transform_data():
+                    return connector.get_clean_data()
+        
+        return pd.DataFrame()
+        
+    except Exception as e:
+        st.error(f"❌ Error obteniendo datos: {str(e)}")
+        return pd.DataFrame()

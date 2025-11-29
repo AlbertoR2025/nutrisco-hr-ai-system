@@ -44,8 +44,10 @@ try:
     # Importar la función corregida
     from utils.google_sheets_connector import get_hr_data
     
-    # URL del Google Sheet de RRHH
-    SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1JqFay6hXlUuURwZFANmr6FXARZqfH7tI/edit#gid=836579878"
+    # URL del Google Sheet de RRHH - VERSIÓN CORREGIDA
+SPREADSHEET_URL = "1JqFay6hXlUuURwZFANmr6FXARZqfH7tI"
+# O si prefieres usar la URL completa:
+# SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1JqFay6hXlUuURwZFANmr6FXARZqfH7tI/edit?gid=836579878"
     
     # Usar la función corregida (SOLO recibe spreadsheet_url)
     with st.spinner("🔄 Conectando con Google Sheets..."):
@@ -137,3 +139,4 @@ st.success("""
 # Footer
 st.markdown("---")
 st.markdown(f"**🕒 Última prueba:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+

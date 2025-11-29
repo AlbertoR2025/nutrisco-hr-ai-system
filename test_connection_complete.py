@@ -1,6 +1,4 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
 
@@ -43,29 +41,28 @@ st.markdown("---")
 st.header("2. Conexión con Google Sheets")
 
 try:
-    # Configurar scope
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    
-    # Crear credenciales
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    client = gspread.authorize(creds)
-    
-    st.success("✅ Autenticación con Google exitosa!")
+    # Importar la función corregida
+    from utils.google_sheets_connector import get_hr_data
     
     # URL del Google Sheet de RRHH
     SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1JqFay6hXlUuURwZFANmr6FXARZqfH7tI/edit#gid=836579878"
     
-    # Intentar abrir el Sheet
-    sheet = client.open_by_url(SPREADSHEET_URL).sheet1
+    # Usar la función corregida (SOLO recibe spreadsheet_url)
+    with st.spinner("🔄 Conectando con Google Sheets..."):
+        df = get_hr_data(SPREADSHEET_URL)
+    
+    if df.empty:
+        st.error("❌ No se pudieron obtener datos del Google Sheet")
+        st.info("""
+        **🎯 Solución de Problemas:**
+        1. **Verificar Compartición del Sheet:** Ve a tu Google Sheet → Compartir → Agrega: `nutrisco-hr-dashboard@adroit-producer-461122-c3.iam.gserviceaccount.com` → Editor
+        2. **Verificar URL:** Asegúrate que la URL sea correcta
+        3. **Verificar Secrets:** Revisa que todos los valores en Secrets sean correctos
+        """)
+        st.stop()
+    
+    st.success("✅ Autenticación con Google exitosa!")
     st.success("✅ Conexión con Google Sheets exitosa!")
-    
-    # Obtener datos
-    records = sheet.get_all_records()
-    df = pd.DataFrame(records)
-    
     st.success(f"✅ Datos obtenidos: {len(df)} registros")
     
     # Mostrar información del dataset
@@ -91,12 +88,12 @@ try:
     for i, col in enumerate(df.columns, 1):
         non_null = df[col].notna().sum()
         dtype = df[col].dtype
-        sample = df[col].iloc[0] if not df.empty else "N/A"
+        sample = str(df[col].iloc[0]) if not df.empty and len(df) > 0 else "N/A"
         
         st.write(f"{i}. **{col}**")
         st.write(f"   - Tipo: {dtype}")
         st.write(f"   - No nulos: {non_null}/{len(df)}")
-        st.write(f"   - Ejemplo: `{sample}`")
+        st.write(f"   - Ejemplo: `{sample[:50]}{'...' if len(sample) > 50 else ''}`")
     
     # Mostrar datos
     st.subheader("👀 Vista Previa de Datos")
@@ -105,36 +102,25 @@ try:
     # Estadísticas básicas
     if not df.empty:
         st.subheader("📈 Estadísticas Básicas")
+        
+        # Información de fechas si existe
+        fecha_info = {}
+        if 'fecha_creacion' in df.columns:
+            fecha_info = {
+                "fecha_minima": df['fecha_creacion'].min().strftime('%d/%m/%Y'),
+                "fecha_maxima": df['fecha_creacion'].max().strftime('%d/%m/%Y')
+            }
+        
         st.json({
             "total_registros": len(df),
             "columnas": list(df.columns),
-            "fechas_min_max": {
-                "min": df.iloc[:, 0].min() if len(df) > 0 else "N/A",
-                "max": df.iloc[:, 0].max() if len(df) > 0 else "N/A"
-            }
+            **fecha_info
         })
     
 except Exception as e:
     st.error(f"❌ Error en la conexión: {str(e)}")
-    
-    st.info("""
-    **🎯 Solución de Problemas:**
-    
-    1. **Verificar Compartición del Sheet:**
-       - Ve a tu Google Sheet
-       - Click en "Compartir"
-       - Agrega: `nutrisco-hr-dashboard@adroit-producer-461122-c3.iam.gserviceaccount.com`
-       - Da permisos de **Editor**
-    
-    2. **Verificar URL:**
-       - Asegúrate que la URL sea: `https://docs.google.com/spreadsheets/d/1JqFay6hXlUuURwZFANmr6FXARZqfH7tI/edit#gid=836579878`
-    
-    3. **Verificar Secrets:**
-       - Revisa que todos los valores en Secrets sean correctos
-       - El private_key debe mantener los `\\n`
-    """)
 
-# 3. INSTRUCCIONES PARA EL SIGUIENTO PASO
+# 3. INSTRUCCIONES PARA EL SIGUIENTE PASO
 st.markdown("---")
 st.header("🎯 Siguientes Pasos")
 

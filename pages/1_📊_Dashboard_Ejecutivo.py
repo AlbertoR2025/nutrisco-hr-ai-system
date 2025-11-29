@@ -1,356 +1,314 @@
 """
-Dashboard Ejecutivo - KPIs y Métricas Principales
-Vista ejecutiva para jefaturas y equipo RRHH
+ETL Pipeline: Google Sheets → Parquet limpio
+Extrae, transforma y limpia datos de Google Sheets para análisis
 """
 
-import streamlit as st
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
 import pandas as pd
-
+import numpy as np
+from datetime import datetime
+import re
 
 # ============================================================================
-# SECCIÓN 1: CONFIGURACIÓN DE GOOGLE SHEETS
+# CONFIGURACIÓN
 # ============================================================================
 
 SHEET_ID = "1JqFay6hXlUuURwZFANmr6FXARZqfH7tI"
 SHEET_GID = "836579878"
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid={SHEET_GID}"
+OUTPUT_FILE = "consultas_limpias.parquet"
 
 
 # ============================================================================
-# SECCIÓN 2: FUNCIÓN DE CARGA DE DATOS
+# FUNCIONES DE LIMPIEZA
 # ============================================================================
 
-@st.cache_data(ttl=600)
-def cargar_conversaciones_desde_google_sheets():
-    """Carga la hoja de consultas desde Google Sheets."""
+def limpiar_fecha(fecha_str):
+    """
+    Parsea fechas en múltiples formatos:
+    - DD/MM/YYYY
+    - YYYY-MM-DD
+    - DD-MM-YYYY
+    - Número serial de Excel (ej: 44865)
+    """
+    if pd.isna(fecha_str):
+        return pd.NaT
+    
+    # Si es número (serial de Excel)
+    if isinstance(fecha_str, (int, float)):
+        try:
+            # Excel cuenta desde 1900-01-01
+            return pd.Timestamp('1899-12-30') + pd.Timedelta(days=int(fecha_str))
+        except:
+            return pd.NaT
+    
+    # Si es string, probar múltiples formatos
+    fecha_str = str(fecha_str).strip()
+    
+    formatos = [
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d/%m/%y",
+        "%d-%m-%y",
+    ]
+    
+    for formato in formatos:
+        try:
+            return pd.to_datetime(fecha_str, format=formato)
+        except:
+            continue
+    
+    # Último intento: detección automática
+    try:
+        return pd.to_datetime(fecha_str, dayfirst=True)
+    except:
+        return pd.NaT
+
+
+def normalizar_texto(texto):
+    """Normaliza texto: trim, lowercase, sin caracteres raros"""
+    if pd.isna(texto):
+        return ""
+    texto = str(texto).strip()
+    # Eliminar múltiples espacios
+    texto = re.sub(r'\s+', ' ', texto)
+    return texto
+
+
+def categorizar_estado(estado_raw):
+    """Estandariza estados"""
+    if pd.isna(estado_raw):
+        return "Sin Estado"
+    
+    estado = str(estado_raw).lower().strip()
+    
+    if "derivad" in estado or "escalad" in estado:
+        return "Derivado"
+    elif "resuel" in estado or "cerrad" in estado or "completad" in estado:
+        return "Resuelto"
+    elif "pendiente" in estado or "en proceso" in estado:
+        return "Pendiente"
+    else:
+        return "Otro"
+
+
+def categorizar_area(area_raw):
+    """Estandariza nombres de áreas"""
+    if pd.isna(area_raw):
+        return "Sin Área"
+    
+    area = str(area_raw).strip()
+    
+    # Mapeo de áreas conocidas (agregar según tu org)
+    mapeo = {
+        "rrhh": "RRHH",
+        "recursos humanos": "RRHH",
+        "ti": "TI",
+        "tecnologia": "TI",
+        "finanzas": "Finanzas",
+        "contabilidad": "Finanzas",
+        "operaciones": "Operaciones",
+        "ops": "Operaciones",
+    }
+    
+    area_lower = area.lower()
+    for key, value in mapeo.items():
+        if key in area_lower:
+            return value
+    
+    return area
+
+
+# ============================================================================
+# ETL PRINCIPAL
+# ============================================================================
+
+def extraer_datos():
+    """Extrae datos desde Google Sheets"""
+    print("📥 Extrayendo datos de Google Sheets...")
     try:
         df = pd.read_csv(CSV_URL)
+        print(f"✅ Extraídas {len(df)} filas, {len(df.columns)} columnas")
+        return df
     except Exception as e:
-        st.error(f"❌ Error al cargar Google Sheet: {e}")
+        print(f"❌ Error en extracción: {e}")
         return pd.DataFrame()
 
+
+def transformar_datos(df):
+    """Limpia y transforma los datos"""
+    print("\n🔄 Transformando datos...")
+    
     if df.empty:
-        st.warning("El Google Sheet está vacío")
-        return pd.DataFrame()
-
-    # Renombrar columnas
-    df = df.rename(
-        columns={
-            "Fecha": "fecha",
-            "Nombre": "usuario",
-            "Área": "area",
-            "Consulta": "categoria",
-            "Observación": "consulta",
-            "Respuesta": "respuesta",
-            "Estado": "estado",
-        }
-    )
-
-    # Si tienen espacio al final
-    if "fecha" not in df.columns and "Fecha " in df.columns:
-        df = df.rename(columns={"Fecha ": "fecha", "Nombre ": "usuario"})
-
-    if "fecha" not in df.columns:
-        st.error(f"❌ La columna 'fecha' no existe. Columnas: {list(df.columns)[:5]}")
-        return pd.DataFrame()
-
-    # 🔍 DEBUG: Ver primeras 5 fechas RAW
-    st.sidebar.write("🔍 Primeras fechas RAW:")
-    st.sidebar.write(df["fecha"].head().tolist())
+        print("❌ DataFrame vacío")
+        return df
     
-    # Convertir fecha con formato específico
-    df["fecha"] = pd.to_datetime(df["fecha"], format="%d/%m/%Y", errors="coerce")
+    # 1. Renombrar columnas
+    columnas_originales = df.columns.tolist()
+    print(f"Columnas originales: {columnas_originales}")
     
-    # Si falló, intentar detección automática
-    if df["fecha"].isna().all():
-        df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-
-    # Mostrar cuántas fechas son inválidas
-    fechas_invalidas = df["fecha"].isna().sum()
-    if fechas_invalidas > 0:
-        st.sidebar.warning(f"⚠️ {fechas_invalidas} filas con fechas inválidas")
+    mapeo_columnas = {
+        "Fecha": "fecha",
+        "Nombre": "usuario",
+        "Área": "area",
+        "Consulta": "categoria",
+        "Observación": "consulta",
+        "Respuesta": "respuesta",
+        "Estado": "estado",
+    }
     
-    # Eliminar filas sin fecha válida
-    df = df.dropna(subset=["fecha"])
-
-    # Agregar columnas derivadas
-    if "estado" in df.columns:
-        df["estado"] = df["estado"].astype(str)
-        df["derivado"] = df["estado"].str.lower().str.contains("derivado", na=False)
+    df = df.rename(columns=mapeo_columnas)
+    
+    # 2. Limpiar fechas
+    print("📅 Limpiando fechas...")
+    if "fecha" in df.columns:
+        df["fecha"] = df["fecha"].apply(limpiar_fecha)
+        fechas_invalidas = df["fecha"].isna().sum()
+        print(f"   - Fechas inválidas: {fechas_invalidas}/{len(df)}")
+        
+        # Eliminar filas sin fecha válida
+        df = df.dropna(subset=["fecha"])
+        print(f"   - Filas restantes: {len(df)}")
     else:
-        df["estado"] = ""
-        df["derivado"] = False
-
-    df["resuelto_primer_contacto"] = ~df["derivado"]
-
-    if "tiempo_respuesta_mins" not in df.columns:
-        df["tiempo_respuesta_mins"] = None
-
-    if "categoria" not in df.columns:
-        df["categoria"] = "Sin categoría"
-
-    df["tema_emergente"] = False
-    df["satisfaccion"] = None
-
+        print("⚠️ No se encontró columna 'fecha'")
+        return pd.DataFrame()
+    
+    # 3. Normalizar textos
+    print("📝 Normalizando textos...")
+    columnas_texto = ["usuario", "categoria", "consulta", "respuesta"]
+    for col in columnas_texto:
+        if col in df.columns:
+            df[col] = df[col].apply(normalizar_texto)
+    
+    # 4. Estandarizar estado
+    print("🏷️ Categorizando estados...")
+    if "estado" in df.columns:
+        df["estado_original"] = df["estado"]
+        df["estado"] = df["estado"].apply(categorizar_estado)
+        print(f"   - Estados únicos: {df['estado'].unique()}")
+    
+    # 5. Estandarizar áreas
+    print("🏢 Categorizando áreas...")
+    if "area" in df.columns:
+        df["area_original"] = df["area"]
+        df["area"] = df["area"].apply(categorizar_area)
+        print(f"   - Áreas únicas: {df['area'].unique()}")
+    
+    # 6. Agregar columnas derivadas
+    print("➕ Agregando columnas derivadas...")
+    df["derivado"] = df["estado"] == "Derivado"
+    df["resuelto_primer_contacto"] = df["estado"] == "Resuelto"
+    
+    # 7. Agregar metadata
+    df["fecha_carga"] = datetime.now()
+    df["año"] = df["fecha"].dt.year
+    df["mes"] = df["fecha"].dt.month
+    df["dia_semana"] = df["fecha"].dt.day_name()
+    df["trimestre"] = df["fecha"].dt.quarter
+    
+    # 8. Ordenar por fecha
+    df = df.sort_values("fecha")
+    
+    print(f"\n✅ Transformación completa: {len(df)} filas finales")
     return df
 
 
-# ============================================================================
-# SECCIÓN 3: FUNCIONES DE CÁLCULO DE KPIs
-# ============================================================================
-
-def calcular_kpis_df(df, fecha_desde, fecha_hasta):
-    """Calcular KPIs principales usando el DataFrame."""
-    if df.empty or "fecha" not in df.columns:
-        return {
-            "total_consultas": 0,
-            "tasa_resolucion_primer_contacto": 0.0,
-            "tiempo_promedio_respuesta_mins": 0.0,
-            "temas_emergentes_nuevos": 0,
-            "tasa_derivacion": 0.0,
-            "consultas_resueltas": 0,
-            "consultas_derivadas": 0,
-        }
-
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask].copy()
-
-    total = len(dff)
-    derivados = int(dff["derivado"].sum()) if total > 0 else 0
-    resueltas = total - derivados
-
-    if total > 0:
-        tasa_derivacion = derivados / total * 100
-        tasa_resolucion = resueltas / total * 100
-    else:
-        tasa_derivacion = 0.0
-        tasa_resolucion = 0.0
-
-    tasa_derivacion = max(0.0, min(100.0, tasa_derivacion))
-    tasa_resolucion = max(0.0, min(100.0, tasa_resolucion))
-
-    t = dff.get("tiempo_respuesta_mins", pd.Series(dtype=float)).dropna()
-    tiempo_prom = float(t.mean()) if not t.empty else 0.0
-
-    fecha_7d = fecha_hasta - timedelta(days=7)
-    dff7 = dff[dff["fecha"] >= fecha_7d]
-    temas_nuevos = dff7["categoria"].nunique()
-
-    return {
-        "total_consultas": total,
-        "tasa_resolucion_primer_contacto": round(tasa_resolucion, 1),
-        "tiempo_promedio_respuesta_mins": round(tiempo_prom, 1),
-        "temas_emergentes_nuevos": int(temas_nuevos),
-        "tasa_derivacion": round(tasa_derivacion, 1),
-        "consultas_resueltas": int(resueltas),
-        "consultas_derivadas": int(derivados),
-    }
+def cargar_datos(df, output_file):
+    """Guarda datos limpios en Parquet"""
+    print(f"\n💾 Guardando datos en {output_file}...")
+    try:
+        df.to_parquet(output_file, compression="snappy", index=False)
+        file_size = pd.io.parquet.to_parquet(df, None).getbuffer().nbytes / 1024
+        print(f"✅ Archivo guardado ({file_size:.1f} KB)")
+        
+        # Guardar también CSV de respaldo
+        csv_file = output_file.replace(".parquet", ".csv")
+        df.to_csv(csv_file, index=False, encoding="utf-8-sig")
+        print(f"✅ CSV de respaldo: {csv_file}")
+        
+        return True
+    except Exception as e:
+        print(f"❌ Error al guardar: {e}")
+        return False
 
 
-# ============================================================================
-# SECCIÓN 4: FUNCIONES PARA GRÁFICOS
-# ============================================================================
-
-def obtener_evolucion_temporal_df(df, fecha_desde, fecha_hasta):
-    """Evolución diaria de consultas en el rango."""
-    if df.empty or "fecha" not in df.columns:
-        return pd.DataFrame(columns=["Fecha", "Total"])
-
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask].copy()
-    if dff.empty:
-        return pd.DataFrame(columns=["Fecha", "Total"])
-
-    out = (
-        dff.groupby(dff["fecha"].dt.date)
-        .size()
-        .reset_index(name="Total")
-        .rename(columns={"fecha": "Fecha"})
-    )
-    out["Fecha"] = pd.to_datetime(out["Fecha"])
-    return out
-
-
-def obtener_distribucion_areas_df(df, fecha_desde, fecha_hasta):
-    """Distribución de consultas por área en el rango."""
-    if df.empty or "fecha" not in df.columns:
-        return pd.DataFrame(columns=["area", "total"])
-
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask].copy()
-    if dff.empty or "area" not in dff.columns:
-        return pd.DataFrame(columns=["area", "total"])
-
-    dff["area"] = dff["area"].fillna("Sin Área")
-    return (
-        dff.groupby("area")
-        .size()
-        .reset_index(name="total")
-        .sort_values("total", ascending=False)
-    )
+def generar_reporte_calidad(df):
+    """Genera reporte de calidad de datos"""
+    print("\n" + "="*60)
+    print("📊 REPORTE DE CALIDAD DE DATOS")
+    print("="*60)
+    
+    print(f"\n📈 Dimensiones:")
+    print(f"   - Filas: {len(df)}")
+    print(f"   - Columnas: {len(df.columns)}")
+    
+    print(f"\n📅 Rango de fechas:")
+    if "fecha" in df.columns and not df.empty:
+        print(f"   - Desde: {df['fecha'].min()}")
+        print(f"   - Hasta: {df['fecha'].max()}")
+        print(f"   - Días cubiertos: {(df['fecha'].max() - df['fecha'].min()).days}")
+    
+    print(f"\n🔍 Valores nulos por columna:")
+    nulos = df.isnull().sum()
+    for col, count in nulos[nulos > 0].items():
+        pct = (count / len(df)) * 100
+        print(f"   - {col}: {count} ({pct:.1f}%)")
+    
+    print(f"\n📊 Distribución por estado:")
+    if "estado" in df.columns:
+        for estado, count in df["estado"].value_counts().items():
+            pct = (count / len(df)) * 100
+            print(f"   - {estado}: {count} ({pct:.1f}%)")
+    
+    print(f"\n🏢 Distribución por área:")
+    if "area" in df.columns:
+        for area, count in df["area"].value_counts().head(5).items():
+            pct = (count / len(df)) * 100
+            print(f"   - {area}: {count} ({pct:.1f}%)")
+    
+    print("\n" + "="*60)
 
 
 # ============================================================================
-# SECCIÓN 5: CONFIGURACIÓN DE LA PÁGINA
+# EJECUCIÓN PRINCIPAL
 # ============================================================================
 
-st.set_page_config(
-    page_title="Dashboard Ejecutivo - Nutrisco",
-    page_icon="📊",
-    layout="wide",
-)
-
-st.markdown(
-    "<h1 style='color: #f97316; text-align: center;'>📊 Dashboard Ejecutivo</h1>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<p style='text-align: center; color: #94a3b8; font-size: 1.1rem;'>Métricas y KPIs del Sistema de Atención a Personas</p>",
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================================
-# SECCIÓN 6: CARGA DE DATOS Y SIDEBAR
-# ============================================================================
-
-df_conversaciones = cargar_conversaciones_desde_google_sheets()
-
-with st.sidebar:
-    st.metric("📊 Filas cargadas", len(df_conversaciones))
-    if not df_conversaciones.empty and "fecha" in df_conversaciones.columns:
-        fecha_min = df_conversaciones["fecha"].min().date()
-        fecha_max = df_conversaciones["fecha"].max().date()
-        st.info(f"📅 {fecha_min} → {fecha_max}")
-
-
-# ============================================================================
-# SECCIÓN 7: FILTROS DE FECHA
-# ============================================================================
-
-st.markdown("---")
-col_filtro1, col_filtro2, col_filtro3 = st.columns([2, 2, 1])
-
-if "fecha_desde" not in st.session_state:
-    st.session_state.fecha_desde = datetime(2020, 1, 1).date()
-if "fecha_hasta" not in st.session_state:
-    st.session_state.fecha_hasta = datetime.now().date()
-
-with col_filtro1:
-    fecha_desde_input = st.date_input("Desde", value=st.session_state.fecha_desde)
-
-with col_filtro2:
-    fecha_hasta_input = st.date_input("Hasta", value=st.session_state.fecha_hasta)
-
-with col_filtro3:
-    st.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Actualizar", use_container_width=True, type="primary"):
-        st.session_state.fecha_desde = fecha_desde_input
-        st.session_state.fecha_hasta = fecha_hasta_input
-        st.cache_data.clear()
-        st.rerun()
-
-fecha_desde = datetime.combine(st.session_state.fecha_desde, datetime.min.time())
-fecha_hasta = datetime.combine(st.session_state.fecha_hasta, datetime.max.time())
+def ejecutar_pipeline():
+    """Ejecuta el pipeline ETL completo"""
+    print("\n" + "="*60)
+    print("🚀 INICIANDO PIPELINE ETL")
+    print("="*60)
+    
+    # Extract
+    df_raw = extraer_datos()
+    if df_raw.empty:
+        print("\n❌ Pipeline abortado: no hay datos")
+        return False
+    
+    # Transform
+    df_clean = transformar_datos(df_raw)
+    if df_clean.empty:
+        print("\n❌ Pipeline abortado: transformación falló")
+        return False
+    
+    # Load
+    success = cargar_datos(df_clean, OUTPUT_FILE)
+    if not success:
+        print("\n❌ Pipeline abortado: error al guardar")
+        return False
+    
+    # Quality Report
+    generar_reporte_calidad(df_clean)
+    
+    print("\n" + "="*60)
+    print("✅ PIPELINE COMPLETADO EXITOSAMENTE")
+    print("="*60)
+    print(f"\n📁 Archivo de salida: {OUTPUT_FILE}")
+    print(f"🔧 Úsalo en Streamlit con: pd.read_parquet('{OUTPUT_FILE}')")
+    
+    return True
 
 
-# ============================================================================
-# SECCIÓN 8: KPIs PRINCIPALES
-# ============================================================================
-
-kpis = calcular_kpis_df(df_conversaciones, fecha_desde, fecha_hasta)
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total consultas", kpis["total_consultas"])
-col2.metric("Resolución 1er contacto", f"{kpis['tasa_resolucion_primer_contacto']:.1f}%")
-col3.metric("Derivadas", kpis["consultas_derivadas"], f"{kpis['tasa_derivacion']:.1f}%")
-col4.metric("Temas emergentes (últ. 7d)", kpis["temas_emergentes_nuevos"])
-
-
-# ============================================================================
-# SECCIÓN 9: GRÁFICO DE EVOLUCIÓN TEMPORAL
-# ============================================================================
-
-st.markdown("### 📈 Evolución diaria de consultas")
-df_evo = obtener_evolucion_temporal_df(df_conversaciones, fecha_desde, fecha_hasta)
-
-if not df_evo.empty:
-    fig_evo = go.Figure()
-    fig_evo.add_trace(
-        go.Scatter(
-            x=df_evo["Fecha"],
-            y=df_evo["Total"],
-            mode="lines+markers",
-            line=dict(color="#f97316", width=3),
-        )
-    )
-    fig_evo.update_layout(
-        height=350,
-        margin=dict(l=40, r=20, t=30, b=40),
-        xaxis_title="Fecha",
-        yaxis_title="Consultas",
-    )
-    st.plotly_chart(fig_evo, use_container_width=True)
-else:
-    st.info("No hay consultas en el rango seleccionado.")
-
-
-# ============================================================================
-# SECCIÓN 10: GRÁFICO DE DISTRIBUCIÓN POR ÁREA
-# ============================================================================
-
-st.markdown("### 🏢 Distribución por área")
-df_areas = obtener_distribucion_areas_df(df_conversaciones, fecha_desde, fecha_hasta)
-
-if not df_areas.empty:
-    fig_areas = go.Figure(
-        go.Bar(
-            x=df_areas["area"],
-            y=df_areas["total"],
-            marker_color="#fb923c",
-        )
-    )
-    fig_areas.update_layout(
-        height=350,
-        margin=dict(l=40, r=20, t=30, b=80),
-        xaxis_title="Área",
-        yaxis_title="Consultas",
-        xaxis_tickangle=-45,
-    )
-    st.plotly_chart(fig_areas, use_container_width=True)
-else:
-    st.info("No hay datos de áreas para el rango seleccionado.")
-
-
-# ============================================================================
-# SECCIÓN 11: TABLA DETALLADA
-# ============================================================================
-
-st.markdown("### 📋 Detalle de consultas")
-
-if not df_conversaciones.empty and "fecha" in df_conversaciones.columns:
-    mask = (df_conversaciones["fecha"] >= fecha_desde) & (
-        df_conversaciones["fecha"] <= fecha_hasta
-    )
-    df_filtrado = df_conversaciones.loc[mask].copy()
-else:
-    df_filtrado = pd.DataFrame()
-
-if not df_filtrado.empty:
-    columnas_tabla = [
-        c
-        for c in ["fecha", "usuario", "area", "categoria", "consulta", "respuesta", "estado"]
-        if c in df_filtrado.columns
-    ]
-    st.dataframe(
-        df_filtrado[columnas_tabla]
-        .sort_values("fecha", ascending=False)
-        .head(50),
-        use_container_width=True,
-        hide_index=True,
-    )
-    st.caption(f"Mostrando {min(50, len(df_filtrado))} de {len(df_filtrado)} consultas.")
-else:
-    st.info("No hay consultas en el rango de fechas seleccionado.")
+if __name__ == "__main__":
+    ejecutar_pipeline()

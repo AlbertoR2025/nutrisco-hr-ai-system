@@ -9,32 +9,41 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 # ---------------------------------------------------------
-# CARGA DE DATOS DESDE GOOGLE SHEETS
+# CONFIGURACIÓN DE GOOGLE SHEETS
 # ---------------------------------------------------------
 
-# URL pública de tu Google Sheet (asegúrate de que esté en modo "Cualquiera con el enlace puede ver")
-GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1JqFay6hXlUuURwZFANmr6FXARZqfH7tI/edit?gid=836579878#gid=836579878"
-
-# Convertir URL a formato CSV exportable
+# ID de tu Google Sheet (extraído de la URL)
 SHEET_ID = "1JqFay6hXlUuURwZFANmr6FXARZqfH7tI"
-SHEET_GID = "836579878"  # El gid de la hoja "Atención 2025"
+SHEET_GID = "836579878"  # GID de la hoja "Atención 2025"
+
+# URL pública para exportar como CSV
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
 
 
 @st.cache_data(ttl=600)  # Cache por 10 minutos
 def cargar_conversaciones_desde_google_sheets():
-    """Carga la hoja de consultas desde Google Sheets y la normaliza."""
+    """Carga la hoja de consultas desde Google Sheets públicamente compartido."""
     try:
+        # Leer el CSV exportado desde Google Sheets
         df = pd.read_csv(CSV_URL)
+        
+        # Debug: ver columnas originales
+        st.sidebar.write(f"Columnas encontradas: {len(df.columns)}")
+        
     except Exception as e:
-        st.error(f"Error al cargar Google Sheet: {e}")
+        st.error(f"❌ Error al cargar Google Sheet: {e}")
+        st.info("Verifica que el Google Sheet esté compartido como 'Cualquiera con el enlace puede ver'")
         return pd.DataFrame()
 
-    # Renombrar columnas (ajusta según los nombres exactos en tu Sheet)
+    if df.empty:
+        st.warning("El Google Sheet está vacío")
+        return pd.DataFrame()
+
+    # Renombrar columnas (ajusta según nombres exactos en tu Sheet)
     df = df.rename(
         columns={
-            "Fecha ": "fecha",
-            "Nombre ": "usuario",
+            "Fecha": "fecha",  # Sin espacio si viene de Sheets limpio
+            "Nombre": "usuario",
             "Área": "area",
             "Consulta": "categoria",
             "Observación": "consulta",
@@ -43,11 +52,24 @@ def cargar_conversaciones_desde_google_sheets():
         }
     )
 
+    # Si las columnas tienen espacios, prueba con esta alternativa:
+    if "fecha" not in df.columns and "Fecha " in df.columns:
+        df = df.rename(
+            columns={
+                "Fecha ": "fecha",
+                "Nombre ": "usuario",
+            }
+        )
+
     if "fecha" not in df.columns:
-        st.warning("La columna 'fecha' no existe tras renombrar. Columnas disponibles: " + str(df.columns.tolist()))
+        st.error(f"La columna 'fecha' no existe. Columnas disponibles: {list(df.columns)}")
         return pd.DataFrame()
 
+    # Convertir fecha a datetime
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+    
+    # Eliminar filas sin fecha válida
+    df = df.dropna(subset=["fecha"])
 
     if "estado" in df.columns:
         df["estado"] = df["estado"].astype(str)
@@ -179,17 +201,23 @@ st.markdown(
 # Cargar datos desde Google Sheets
 df_conversaciones = cargar_conversaciones_desde_google_sheets()
 
-# Mostrar estado de carga (opcional, quita estas líneas en producción)
-st.write(f"Filas cargadas: {len(df_conversaciones)}")
+# Mostrar estado de carga en sidebar
+with st.sidebar:
+    st.metric("Filas cargadas", len(df_conversaciones))
+    if not df_conversaciones.empty and "fecha" in df_conversaciones.columns:
+        fecha_min = df_conversaciones["fecha"].min().date()
+        fecha_max = df_conversaciones["fecha"].max().date()
+        st.write(f"Rango: {fecha_min} a {fecha_max}")
 
 # Filtros de fecha
 st.markdown("---")
 col_filtro1, col_filtro2, col_filtro3 = st.columns([2, 2, 1])
 
+# Valores por defecto más amplios para capturar datos
 if "fecha_desde" not in st.session_state:
-    st.session_state.fecha_desde = datetime.now() - timedelta(days=365)  # Ampliado a 1 año
+    st.session_state.fecha_desde = datetime(2020, 1, 1).date()  # Muy atrás
 if "fecha_hasta" not in st.session_state:
-    st.session_state.fecha_hasta = datetime.now()
+    st.session_state.fecha_hasta = datetime.now().date()
 
 with col_filtro1:
     fecha_desde_input = st.date_input("Desde", value=st.session_state.fecha_desde)

@@ -4,6 +4,7 @@ from google.oauth2.service_account import Credentials
 import streamlit as st
 from datetime import datetime, timedelta
 import numpy as np
+import re
 
 class HRSheetsConnector:
     def __init__(self):
@@ -11,8 +12,8 @@ class HRSheetsConnector:
         self.df_raw = None
         self.df_clean = None
         
-    def connect_to_sheets(self, credentials_info, spreadsheet_url):
-        """Conectar con Google Sheets usando service account"""
+    def connect_to_sheets(self, credentials_info, spreadsheet_url_or_id, sheet_name=None):
+        """Conectar con Google Sheets - VERSIÓN MEJORADA"""
         try:
             # Configurar scope
             scope = [
@@ -20,25 +21,97 @@ class HRSheetsConnector:
                 "https://www.googleapis.com/auth/drive"
             ]
             
-            # Crear credenciales desde el dict
+            # Crear credenciales
             creds = Credentials.from_service_account_info(credentials_info, scopes=scope)
             client = gspread.authorize(creds)
             
-            # Abrir por URL
-            self.sheet = client.open_by_url(spreadsheet_url).sheet1
+            st.sidebar.write("🔗 Conectando con Google Sheets...")
+            
+            # Extraer el ID del spreadsheet
+            if 'spreadsheets/d/' in spreadsheet_url_or_id:
+                # Es una URL - extraer ID
+                match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', spreadsheet_url_or_id)
+                if match:
+                    spreadsheet_id = match.group(1)
+                else:
+                    st.error("❌ No se pudo extraer el ID de la URL")
+                    return False
+            else:
+                # Ya es un ID
+                spreadsheet_id = spreadsheet_url_or_id
+            
+            # Abrir el spreadsheet
+            spreadsheet = client.open_by_key(spreadsheet_id)
+            st.sidebar.write(f"✅ Spreadsheet abierto: {spreadsheet.title}")
+            
+            # Obtener lista de hojas disponibles
+            worksheets = spreadsheet.worksheets()
+            sheet_names = [ws.title for ws in worksheets]
+            st.sidebar.write(f"📋 Hojas disponibles: {sheet_names}")
+            
+            # Intentar encontrar la hoja correcta
+            target_sheet = None
+            
+            # Método 1: Por nombre específico si se proporciona
+            if sheet_name:
+                try:
+                    target_sheet = spreadsheet.worksheet(sheet_name)
+                    st.sidebar.write(f"✅ Usando hoja por nombre: {sheet_name}")
+                except:
+                    st.sidebar.write(f"⚠️ No se encontró hoja con nombre: {sheet_name}")
+            
+            # Método 2: Buscar por GID si está en la URL
+            if not target_sheet and 'gid=' in spreadsheet_url_or_id:
+                gid_match = re.search(r'gid=(\d+)', spreadsheet_url_or_id)
+                if gid_match:
+                    target_gid = int(gid_match.group(1))
+                    for ws in worksheets:
+                        if ws.id == target_gid:
+                            target_sheet = ws
+                            st.sidebar.write(f"✅ Usando hoja por GID: {target_gid} - {ws.title}")
+                            break
+            
+            # Método 3: Usar la primera hoja
+            if not target_sheet:
+                target_sheet = worksheets[0]
+                st.sidebar.write(f"✅ Usando primera hoja: {target_sheet.title}")
+            
+            self.sheet = target_sheet
+            st.sidebar.write(f"📊 Hoja seleccionada: {self.sheet.title}")
             return True
             
         except Exception as e:
             st.error(f"❌ Error conectando con Google Sheets: {str(e)}")
+            st.info(f"""
+            **🔧 Información para Debugging:**
+            - URL/ID usado: `{spreadsheet_url_or_id}`
+            - Service Account: `{credentials_info.get('client_email', 'No disponible')}`
+            - Error: {str(e)}
+            
+            **🎯 Verifica:**
+            1. Que el Sheet esté compartido con: `nutrisco-hr-dashboard@adroit-producer-461122-c3.iam.gserviceaccount.com`
+            2. Que tenga permisos de **Editor**
+            3. Que la hoja tenga datos
+            """)
             return False
     
     def extract_data(self):
         """Extraer todos los datos de la hoja"""
         try:
+            # Obtener todos los registros
             records = self.sheet.get_all_records()
+            
+            if not records:
+                st.warning("⚠️ La hoja está vacía o no tiene datos en formato de tabla")
+                return False
+                
             self.df_raw = pd.DataFrame(records)
             
-            st.success(f"✅ Datos extraídos: {len(self.df_raw)} registros")
+            if self.df_raw.empty:
+                st.warning("⚠️ El DataFrame está vacío después de la conversión")
+                return False
+                
+            st.sidebar.write(f"✅ Datos extraídos: {len(self.df_raw)} registros, {len(self.df_raw.columns)} columnas")
             return True
             
         except Exception as e:
@@ -48,16 +121,16 @@ class HRSheetsConnector:
     def transform_data(self):
         """Transformación robusta de datos RRHH"""
         if self.df_raw is None or self.df_raw.empty:
-            st.error("No hay datos para transformar")
+            st.error("❌ No hay datos para transformar")
             return False
         
         df = self.df_raw.copy()
         
-        # DEBUG: Mostrar columnas originales
-        st.sidebar.write("🔍 Columnas originales:", df.columns.tolist())
+        st.sidebar.write("🔄 Iniciando transformación de datos...")
         
         # 1. NORMALIZAR NOMBRES DE COLUMNAS
         df.columns = [self.normalize_column_name(col) for col in df.columns]
+        st.sidebar.write(f"📝 Columnas normalizadas: {list(df.columns)}")
         
         # 2. MAPEO INTELIGENTE DE COLUMNAS
         df = self.map_columns_intelligently(df)
@@ -75,11 +148,11 @@ class HRSheetsConnector:
         df = self.validate_and_complete_data(df)
         
         self.df_clean = df
-        st.success(f"✅ Datos transformados: {len(self.df_clean)} registros limpios")
+        st.sidebar.write(f"✅ Transformación completada: {len(self.df_clean)} registros limpios")
         return True
     
     def normalize_column_name(self, name):
-        """Normalizar nombres de columnas de forma robusta"""
+        """Normalizar nombres de columnas"""
         if pd.isna(name):
             return 'columna_desconocida'
         
@@ -88,7 +161,7 @@ class HRSheetsConnector:
         # Remover tildes y caracteres especiales
         replacements = {
             'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
-            'ñ': 'n', 'ü': 'u', ' ': '_', '-': '_'
+            'ñ': 'n', 'ü': 'u', ' ': '_', '-': '_', '(': '', ')': ''
         }
         
         for old, new in replacements.items():
@@ -98,58 +171,58 @@ class HRSheetsConnector:
     
     def map_columns_intelligently(self, df):
         """Mapeo inteligente basado en patrones comunes"""
-        
-        # Buscar columnas que podrían ser cada tipo
-        fecha_candidates = [col for col in df.columns if any(x in col for x in ['fecha', 'date', 'fech'])]
-        usuario_candidates = [col for col in df.columns if any(x in col for x in ['usuario', 'nombre', 'colaborador', 'empleado'])]
-        area_candidates = [col for col in df.columns if any(x in col for x in ['area', 'departamento', 'depto'])]
-        consulta_candidates = [col for col in df.columns if any(x in col for x in ['consulta', 'pregunta', 'solicitud', 'motivo'])]
-        respuesta_candidates = [col for col in df.columns if any(x in col for x in ['respuesta', 'solucion', 'observacion'])]
-        estado_candidates = [col for col in df.columns if any(x in col for x in ['estado', 'status'])]
-        
-        # Asignar la primera columna candidata encontrada
         mapping = {}
-        if fecha_candidates: mapping['fecha_raw'] = fecha_candidates[0]
-        if usuario_candidates: mapping['usuario'] = usuario_candidates[0]
-        if area_candidates: mapping['area_raw'] = area_candidates[0]
-        if consulta_candidates: mapping['consulta'] = consulta_candidates[0]
-        if respuesta_candidates: mapping['respuesta'] = respuesta_candidates[0]
-        if estado_candidates: mapping['estado_raw'] = estado_candidates[0]
+        
+        # Buscar columnas por patrones
+        for col in df.columns:
+            col_lower = col.lower()
+            
+            if any(x in col_lower for x in ['fecha', 'date']):
+                mapping[col] = 'fecha_raw'
+            elif any(x in col_lower for x in ['usuario', 'nombre', 'colaborador', 'empleado']):
+                mapping[col] = 'usuario'
+            elif any(x in col_lower for x in ['area', 'departamento', 'depto']):
+                mapping[col] = 'area_raw'
+            elif any(x in col_lower for x in ['consulta', 'pregunta', 'solicitud', 'motivo']):
+                mapping[col] = 'consulta'
+            elif any(x in col_lower for x in ['respuesta', 'solucion', 'observacion', 'comentario']):
+                mapping[col] = 'respuesta'
+            elif any(x in col_lower for x in ['estado', 'status']):
+                mapping[col] = 'estado_raw'
+            elif any(x in col_lower for x in ['derivado', 'asignado']):
+                mapping[col] = 'derivado_a'
         
         # Aplicar renombrado
-        for new_name, old_name in mapping.items():
-            if old_name in df.columns:
-                df[new_name] = df[old_name]
-            
+        for old_name, new_name in mapping.items():
+            df[new_name] = df[old_name]
+        
         st.sidebar.write("🗂️ Columnas mapeadas:", mapping)
         return df
     
     def clean_dates_robust(self, df):
-        """Limpieza robusta de fechas con múltiples intentos"""
+        """Limpieza robusta de fechas"""
         if 'fecha_raw' not in df.columns:
-            st.warning("⚠️ No se encontró columna de fecha")
+            st.sidebar.warning("⚠️ No se encontró columna de fecha, usando fecha actual")
             df['fecha_creacion'] = datetime.now()
             return df
         
-        # Intentar diferentes métodos de parsing
-        fecha_series = df['fecha_raw']
+        # Intentar diferentes formatos de fecha
+        original_dates = df['fecha_raw'].copy()
         
-        # Método 1: Intentar datetime normal
-        df['fecha_creacion'] = pd.to_datetime(fecha_series, errors='coerce', dayfirst=True)
+        # Método 1: datetime normal
+        df['fecha_creacion'] = pd.to_datetime(df['fecha_raw'], errors='coerce', dayfirst=True)
         
-        # Método 2: Si falla, intentar formato específico DD/MM/YYYY
-        if df['fecha_creacion'].isna().any():
+        # Método 2: Si hay muchos NaT, intentar formato específico
+        if df['fecha_creacion'].isna().sum() > len(df) * 0.5:  # Si más del 50% son NaT
             try:
-                mask = df['fecha_creacion'].isna()
-                df.loc[mask, 'fecha_creacion'] = pd.to_datetime(
-                    df.loc[mask, 'fecha_raw'], format='%d/%m/%Y', errors='coerce'
-                )
+                df['fecha_creacion'] = pd.to_datetime(df['fecha_raw'], format='%d/%m/%Y', errors='coerce')
             except:
                 pass
         
-        # Método 3: Si aún falla, intentar formato YYYY-MM-DD
+        # Método 3: Intentar con diferentes formatos
         if df['fecha_creacion'].isna().any():
             try:
+                # Para formatos como "2023-12-31"
                 mask = df['fecha_creacion'].isna()
                 df.loc[mask, 'fecha_creacion'] = pd.to_datetime(
                     df.loc[mask, 'fecha_raw'], format='%Y-%m-%d', errors='coerce'
@@ -157,21 +230,13 @@ class HRSheetsConnector:
             except:
                 pass
         
-        # Método 4: Si son números de Excel/Sheets
-        if df['fecha_creacion'].isna().any():
-            try:
-                mask = df['fecha_creacion'].isna()
-                # Convertir números de Excel a fechas
-                excel_serial_numbers = pd.to_numeric(df.loc[mask, 'fecha_raw'], errors='coerce')
-                df.loc[mask, 'fecha_creacion'] = pd.to_datetime(
-                    '1899-12-30') + pd.to_timedelta(excel_serial_numbers, unit='D')
-            except:
-                pass
-        
         # Si aún hay fechas vacías, usar fecha actual
-        df['fecha_creacion'] = df['fecha_creacion'].fillna(pd.Timestamp.now())
+        nan_count = df['fecha_creacion'].isna().sum()
+        if nan_count > 0:
+            st.sidebar.warning(f"⚠️ {nan_count} fechas no pudieron parsearse, usando fecha actual")
+            df['fecha_creacion'] = df['fecha_creacion'].fillna(pd.Timestamp.now())
         
-        st.sidebar.write("📅 Fechas procesadas - Mín:", df['fecha_creacion'].min().strftime('%d/%m/%Y'), "Máx:", df['fecha_creacion'].max().strftime('%d/%m/%Y'))
+        st.sidebar.write(f"📅 Fechas: {df['fecha_creacion'].min().strftime('%d/%m/%Y')} a {df['fecha_creacion'].max().strftime('%d/%m/%Y')}")
         return df
     
     def normalize_categories(self, df):
@@ -179,13 +244,13 @@ class HRSheetsConnector:
         # Normalizar áreas
         if 'area_raw' in df.columns:
             area_mapping = {
-                'rrhh': 'RRHH', 'recursos humanos': 'RRHH', 'rh': 'RRHH',
-                'ti': 'TI', 'tecnologías de información': 'TI', 'sistemas': 'TI',
+                'rrhh': 'RRHH', 'recursoshumanos': 'RRHH', 'rh': 'RRHH',
+                'ti': 'TI', 'tecnologia': 'TI', 'sistemas': 'TI',
                 'finanzas': 'Finanzas', 'contabilidad': 'Finanzas',
-                'operaciones': 'Operaciones', 'producción': 'Operaciones',
+                'operaciones': 'Operaciones', 'produccion': 'Operaciones',
                 'ventas': 'Ventas', 'comercial': 'Ventas',
                 'marketing': 'Marketing',
-                'administración': 'Administración', 'admin': 'Administración'
+                'administracion': 'Administración', 'admin': 'Administración'
             }
             
             df['area'] = (
@@ -201,7 +266,7 @@ class HRSheetsConnector:
         if 'estado_raw' in df.columns:
             estado_mapping = {
                 'resuelto': 'Resuelto', 'completado': 'Resuelto', 'cerrado': 'Resuelto',
-                'pendiente': 'Pendiente', 'en proceso': 'Pendiente',
+                'pendiente': 'Pendiente', 'enproceso': 'Pendiente',
                 'derivado': 'Derivado', 'asignado': 'Derivado'
             }
             
@@ -214,23 +279,24 @@ class HRSheetsConnector:
                 .fillna('Sin Estado')
             )
         else:
-            df['estado'] = 'Resuelto'  # Por defecto
+            df['estado'] = 'Resuelto'
         
         return df
     
     def calculate_derived_metrics(self, df):
         """Calcular métricas para KPIs"""
-        # Resolución primer contacto (si no está derivado y está resuelto)
+        # Resolución primer contacto
         df['resolucion_primer_contacto'] = (
             (df['estado'] == 'Resuelto') & 
-            (~df['respuesta'].isna()) & 
-            (df['respuesta'] != '')
+            (df['respuesta'].notna()) & 
+            (df['respuesta'].astype(str) != '') &
+            (df['derivado_a'].isna() | (df['derivado_a'].astype(str) == ''))
         )
         
-        # Tiempo de respuesta (si tenemos fecha de creación)
+        # Tiempo desde creación
         df['dias_desde_creacion'] = (datetime.now() - df['fecha_creacion']).dt.days
         
-        # Categorizar consultas por contenido
+        # Categorizar consultas
         df['categoria'] = self.categorize_consultas(df)
         
         return df
@@ -241,10 +307,10 @@ class HRSheetsConnector:
             return 'General'
         
         categorias = {
-            'beneficios': ['bono', 'beneficio', 'prestación', 'subsidio', 'ayuda'],
-            'nomina': ['sueldo', 'pago', 'nómina', 'liquidación', 'descuento'],
+            'beneficios': ['bono', 'beneficio', 'prestacion', 'subsidio', 'ayuda'],
+            'nomina': ['sueldo', 'pago', 'nomina', 'liquidacion', 'descuento'],
             'vacaciones': ['vacacion', 'permiso', 'día libre', 'descanso'],
-            'capacitacion': ['curso', 'capacitación', 'training', 'entrenamiento'],
+            'capacitacion': ['curso', 'capacitacion', 'training', 'entrenamiento'],
             'equipo': ['laptop', 'computador', 'herramienta', 'equipo'],
             'sistema': ['sistema', 'software', 'plataforma', 'acceso', 'login']
         }
@@ -264,18 +330,17 @@ class HRSheetsConnector:
     def validate_and_complete_data(self, df):
         """Validar y completar datos críticos"""
         # Asegurar columnas críticas
-        if 'usuario' not in df.columns:
-            df['usuario'] = 'Usuario no especificado'
+        required_columns = {
+            'usuario': 'Usuario no especificado',
+            'consulta': 'Consulta no especificada', 
+            'respuesta': 'En proceso',
+            'area': 'Otros',
+            'estado': 'Pendiente'
+        }
         
-        if 'consulta' not in df.columns:
-            df['consulta'] = 'Consulta no especificada'
-        
-        if 'respuesta' not in df.columns:
-            df['respuesta'] = 'En proceso'
-        
-        # Validar fechas
-        fecha_maxima = datetime.now() + timedelta(days=1)  # Permitir hasta mañana
-        df['fecha_creacion'] = df['fecha_creacion'].clip(upper=fecha_maxima)
+        for col, default in required_columns.items():
+            if col not in df.columns:
+                df[col] = default
         
         return df
     
@@ -283,15 +348,16 @@ class HRSheetsConnector:
         """Obtener datos limpios"""
         return self.df_clean
 
-# Función principal para usar en Streamlit - VERSIÓN CORREGIDA
-def get_hr_data(spreadsheet_url):
-    """Función principal para obtener datos de RRHH - Sin cache problemático"""
+# Función principal para usar en Streamlit
+def get_hr_data(spreadsheet_url_or_id, sheet_name=None):
+    """Función principal para obtener datos de RRHH"""
     try:
-        # Obtener secrets directamente
+        # Obtener secrets
         credentials_info = dict(st.secrets["gcp_service_account"])
         connector = HRSheetsConnector()
         
-        if connector.connect_to_sheets(credentials_info, spreadsheet_url):
+        # Conectar y obtener datos
+        if connector.connect_to_sheets(credentials_info, spreadsheet_url_or_id, sheet_name):
             if connector.extract_data():
                 if connector.transform_data():
                     return connector.get_clean_data()

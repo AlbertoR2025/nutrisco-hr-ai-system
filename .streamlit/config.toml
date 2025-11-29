@@ -1,9 +1,15 @@
-[gcp_service_account]
-type = "service_account"
-project_id = "tu-proyecto"
-private_key_id = "xxx"
-private_key = "-----BEGIN PRIVATE KEY-----\nxxx\n-----END PRIVATE KEY-----\n"
-client_email = "tu-service-account@tu-proyecto.iam.gserviceaccount.com"
-client_id = "xxx"
-auth_uri = "https://accounts.google.com/o/oauth2/auth"
-token_uri = "https://oauth2.googleapis.com/token"
+[theme]
+primaryColor = "#f97316"
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#ffffff"
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+port = 8501
+
+[browser]
+gatherUsageStats = false

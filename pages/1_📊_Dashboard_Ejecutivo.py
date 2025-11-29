@@ -1,306 +1,225 @@
-"""
-📊 Dashboard Ejecutivo - Nutrisco
-Métricas y KPIs del Sistema de Atención a Personas
-Lee datos desde Google Sheets (CSV público), normaliza columnas y fechas.
-"""
-
 import streamlit as st
+import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import pandas as pd
+import sys
+import os
 
-# ============================================================================
-# CONFIGURACIÓN GOOGLE SHEETS
-# ============================================================================
+# Agregar utils al path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
 
-SHEET_ID = "1JqFay6hXlUuURwZFANmr6FXARZqfH7tI"
-SHEET_GID = "836579878"
+from advanced_database import AdvancedHRDatabase
 
-# CSV público del Sheet (asegúrate que el sheet está compartido como
-# “Cualquiera con el enlace puede ver”)
-CSV_URL = (
-    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?"
-    f"tqx=out:csv&gid={SHEET_GID}"
-)
-
-# ============================================================================
-# FUNCIONES ETL
-# ============================================================================
-
-def limpiar_fecha(fecha_raw):
-    """Parsea fechas de forma robusta desde Google Sheets."""
-    if pd.isna(fecha_raw):
-        return pd.NaT
-
-    # Números seriales Excel/Sheets
-    if isinstance(fecha_raw, (int, float)):
-        try:
-            return pd.Timestamp("1899-12-30") + pd.Timedelta(days=int(fecha_raw))
-        except Exception:
-            return pd.NaT
-
-    s = str(fecha_raw).strip()
-
-    formatos = [
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%d/%m/%y",
-        "%d-%m-%y",
-        "%m/%d/%Y",
-        "%m-%d-%Y",
-    ]
-
-    for fmt in formatos:
-        try:
-            return pd.to_datetime(s, format=fmt)
-        except Exception:
-            continue
-
-    # Último intento automático
-    try:
-        return pd.to_datetime(s, dayfirst=True)
-    except Exception:
-        return pd.NaT
-
-
-def categorizar_estado(estado_raw):
-    """Normaliza el estado de la consulta."""
-    if pd.isna(estado_raw):
-        return "Sin Estado"
-
-    s = str(estado_raw).lower()
-
-    if "deriv" in s or "escala" in s:
-        return "Derivado"
-    if "resuel" in s or "cerrad" in s or "complet" in s:
-        return "Resuelto"
-    if "pend" in s or "proceso" in s or "abiert" in s:
-        return "Pendiente"
-    return "Otro"
-
-
-def normalizar_area(area_raw):
-    """Normaliza nombres de áreas."""
-    if pd.isna(area_raw):
-        return "Sin Área"
-
-    s = str(area_raw).strip()
-    s_lower = s.lower()
-
-    mapeo = {
-        "rrhh": "RRHH",
-        "recursos humanos": "RRHH",
-        "ti": "TI",
-        "tecnolog": "TI",
-        "sistema": "TI",
-        "finanza": "Finanzas",
-        "contab": "Finanzas",
-        "operacion": "Operaciones",
-        "ops": "Operaciones",
-        "producci": "Producción",
-    }
-
-    for key, value in mapeo.items():
-        if key in s_lower:
-            return value
-
-    return s
-
-
-@st.cache_data(ttl=600)
-def cargar_y_transformar_datos():
-    """
-    ETL completo:
-    - Lee CSV desde Google Sheets
-    - Normaliza nombres de columnas
-    - Limpia fechas y campos de texto
-    - Genera columnas derivadas
-    """
-    try:
-        df = pd.read_csv(CSV_URL)
-    except Exception as e:
-        st.error(f"❌ Error al cargar Google Sheet: {e}")
-        return pd.DataFrame()
-
-    if df.empty:
-        st.warning("⚠️ El Google Sheet está vacío.")
-        return pd.DataFrame()
-
-    # 1) Normalizar nombres de columnas (strip + lower)
-    columnas_originales = df.columns.tolist()
-    df.columns = [c.strip().lower() for c in df.columns]
-
-    # 2) Mapear a nombres internos estándar
-    # Ajusta los keys según cómo estén EXACTAMENTE en tu Sheet (en minúsculas)
-    mapeo_columnas = {
-        "fecha": "fecha_raw",
-        "nombre": "usuario",
-        "área": "area_raw",
-        "area": "area_raw",
-        "consulta": "categoria",
-        "observación": "consulta",
-        "observacion": "consulta",
-        "respuesta": "respuesta",
-        "estado": "estado_raw",
-    }
-
-    df = df.rename(columns=mapeo_columnas)
-
-    # Debug opcional: ver columnas detectadas
-    st.sidebar.write("Columnas detectadas (normalizadas):")
-    st.sidebar.write(df.columns.tolist())
-
-    # 3) Validar que haya columna de fecha
-    if "fecha_raw" not in df.columns:
-        st.error("❌ No se encontró ninguna columna de fecha ('Fecha'). "
-                 "Revisa el Google Sheet y que la columna se llame 'Fecha'.")
-        return pd.DataFrame()
-
-    # 4) Limpiar fechas
-    df["fecha"] = df["fecha_raw"].apply(limpiar_fecha)
-    fechas_invalidas = df["fecha"].isna().sum()
-    if fechas_invalidas > 0:
-        st.sidebar.warning(f"⚠️ {fechas_invalidas} filas con fecha inválida serán ignoradas.")
-    df = df.dropna(subset=["fecha"])
-
-    if df.empty:
-        st.error("❌ Todas las filas quedaron sin fecha válida después de limpiar.")
-        return pd.DataFrame()
-
-    # 5) Limpiar textos
-    for col in ["usuario", "categoria", "consulta", "respuesta"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("").astype(str).str.strip()
-
-    # 6) Normalizar estado
-    if "estado_raw" in df.columns:
-        df["estado"] = df["estado_raw"].apply(categorizar_estado)
-    else:
-        df["estado"] = "Sin Estado"
-
-    # 7) Normalizar área
-    if "area_raw" in df.columns:
-        df["area"] = df["area_raw"].apply(normalizar_area)
-    else:
-        df["area"] = "Sin Área"
-
-    # 8) Columnas derivadas
-    df["derivado"] = df["estado"] == "Derivado"
-    df["resuelto"] = df["estado"] == "Resuelto"
-
-    # 9) Metadatos de fecha
-    df["año"] = df["fecha"].dt.year
-    df["mes"] = df["fecha"].dt.month
-    df["mes_nombre"] = df["fecha"].dt.month_name()
-    df["dia_semana"] = df["fecha"].dt.day_name()
-    df["trimestre"] = df["fecha"].dt.quarter
-
-    # 10) Ordenar
-    df = df.sort_values("fecha")
-
-    return df
-
-# ============================================================================
-# FUNCIONES DE ANÁLISIS / KPI
-# ============================================================================
-
-def calcular_kpis(df, fecha_desde, fecha_hasta):
-    if df.empty:
-        return {
-            "total_consultas": 0,
-            "tasa_resolucion": 0.0,
-            "tasa_derivacion": 0.0,
-            "consultas_resueltas": 0,
-            "consultas_derivadas": 0,
-            "temas_emergentes": 0,
-        }
-
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask].copy()
-
-    total = len(dff)
-    derivados = int(dff["derivado"].sum()) if "derivado" in dff.columns else 0
-    resueltas = int(dff["resuelto"].sum()) if "resuelto" in dff.columns else 0
-
-    tasa_derivacion = derivados / total * 100 if total > 0 else 0.0
-    tasa_resolucion = resueltas / total * 100 if total > 0 else 0.0
-
-    fecha_7d = fecha_hasta - timedelta(days=7)
-    temas_nuevos = (
-        dff[dff["fecha"] >= fecha_7d]["categoria"].nunique()
-        if "categoria" in dff.columns
-        else 0
-    )
-
-    return {
-        "total_consultas": total,
-        "tasa_resolucion": round(tasa_resolucion, 1),
-        "tasa_derivacion": round(tasa_derivacion, 1),
-        "consultas_resueltas": resueltas,
-        "consultas_derivadas": derivados,
-        "temas_emergentes": temas_nuevos,
-    }
-
-
-def obtener_evolucion_temporal(df, fecha_desde, fecha_hasta):
-    if df.empty:
-        return pd.DataFrame(columns=["Fecha", "Total"])
-
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask].copy()
-    if dff.empty:
-        return pd.DataFrame(columns=["Fecha", "Total"])
-
-    out = (
-        dff.groupby(dff["fecha"].dt.date)
-        .size()
-        .reset_index(name="Total")
-        .rename(columns={"fecha": "Fecha"})
-    )
-    out["Fecha"] = pd.to_datetime(out["Fecha"])
-    return out
-
-
-def obtener_distribucion_areas(df, fecha_desde, fecha_hasta):
-    if df.empty:
-        return pd.DataFrame(columns=["area", "total"])
-
-    mask = (df["fecha"] >= fecha_desde) & (df["fecha"] <= fecha_hasta)
-    dff = df.loc[mask].copy()
-    if dff.empty or "area" not in dff.columns:
-        return pd.DataFrame(columns=["area", "total"])
-
-    dff["area"] = dff["area"].fillna("Sin Área")
-    return (
-        dff.groupby("area")
-        .size()
-        .reset_index(name="total")
-        .sort_values("total", ascending=False)
-    )
-
-# ============================================================================
-# UI PRINCIPAL
-# ============================================================================
-
+# Configuración de página
 st.set_page_config(
-    page_title="Dashboard Ejecutivo - Nutrisco",
+    page_title="Dashboard Ejecutivo RRHH",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="expanded"
 )
 
+# Título principal
+st.title("📊 Dashboard Ejecutivo RRHH")
+st.markdown("Métricas y KPIs del Sistema de Atención a Colaboradores")
+
+# Inicializar base de datos
+@st.cache_resource
+def load_database():
+    return AdvancedHRDatabase()
+
+db = load_database()
+
+# Sidebar para filtros
+st.sidebar.header("🎛️ Filtros")
+
+# Fechas por defecto (últimos 3 meses)
+default_end = datetime.now()
+default_start = default_end - timedelta(days=90)
+
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    fecha_desde = st.date_input(
+        "Desde",
+        value=default_start,
+        max_value=datetime.now()
+    )
+with col2:
+    fecha_hasta = st.date_input(
+        "Hasta", 
+        value=default_end,
+        max_value=datetime.now()
+    )
+
+# Botón para actualizar
+if st.sidebar.button("🔄 Actualizar Dashboard"):
+    st.rerun()
+
+# Mostrar datos cargados
+st.sidebar.markdown("---")
+st.sidebar.metric("📊 Registros Cargados", f"{len(db.df):,}")
+
+# KPIs Principales
+st.markdown("---")
+st.subheader("🎯 KPIs Principales")
+
+try:
+    # Obtener KPIs
+    kpis = db.get_kpis(fecha_desde, fecha_hasta)
+    
+    # Métricas principales
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            label="Total Consultas",
+            value=f"{kpis['total_consultas']:,}",
+            delta=f"Período seleccionado"
+        )
+    
+    with col2:
+        st.metric(
+            label="Resolución 1er Contacto",
+            value=f"{kpis['resolucion_primer_contacto']:.1f}%",
+            delta=f"Meta: ≥70%",
+            delta_color="normal" if kpis['resolucion_primer_contacto'] >= 70 else "inverse"
+        )
+    
+    with col3:
+        st.metric(
+            label="Tiempo Promedio Respuesta",
+            value=f"{kpis['tiempo_promedio_respuesta']:.1f}h",
+            delta=f"Meta: ≤24h",
+            delta_color="normal" if kpis['tiempo_promedio_respuesta'] <= 24 else "inverse"
+        )
+    
+    with col4:
+        st.metric(
+            label="Temas Emergentes",
+            value=kpis['temas_emergentes'],
+            delta="Últimos 7 días"
+        )
+    
+    # KPIs Secundarios
+    st.markdown("---")
+    st.subheader("📈 Métricas de Desempeño")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            label="Consultas Resueltas",
+            value=kpis['consultas_resueltas'],
+            delta=f"{kpis['tasa_resolucion']:.1f}%"
+        )
+    
+    with col2:
+        st.metric(
+            label="Consultas Derivadas",
+            value=kpis['consultas_derivadas'],
+            delta=f"{kpis['tasa_derivacion']:.1f}%"
+        )
+    
+    with col3:
+        st.metric(
+            label="Promedio Diario",
+            value=f"{kpis['promedio_diario']:.1f}",
+            delta="consultas/día"
+        )
+    
+    with col4:
+        st.metric(
+            label="Eficiencia Equipo",
+            value=f"{kpis['eficiencia_equipo']:.1f}%",
+            delta="autonomía"
+        )
+    
+    # Análisis Visual
+    st.markdown("---")
+    st.subheader("📊 Análisis Visual")
+    
+    # Dos columnas para gráficos
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**🔝 Top 10 Temas Más Recurrentes**")
+        try:
+            top_temas = db.get_top_topics(limit=10, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
+            if not top_temas.empty:
+                fig = px.bar(
+                    top_temas,
+                    x='Cantidad',
+                    y='Tema',
+                    orientation='h',
+                    title="Temas Más Frecuentes",
+                    color='Cantidad',
+                    color_continuous_scale='blues'
+                )
+                fig.update_layout(showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay datos para mostrar en el período seleccionado")
+        except Exception as e:
+            st.error(f"Error generando gráfico de temas: {str(e)}")
+    
+    with col2:
+        st.markdown("**📈 Tendencias Mensuales**")
+        try:
+            trends_data = db.get_trends_data()
+            if not trends_data.empty:
+                fig = px.line(
+                    trends_data,
+                    x='mes',
+                    y='cantidad',
+                    color='categoria_estandar',
+                    title="Evolución de Consultas por Categoría",
+                    markers=True
+                )
+                fig.update_layout(xaxis_title="Mes", yaxis_title="Cantidad de Consultas")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay datos de tendencias disponibles")
+        except Exception as e:
+            st.error(f"Error generando gráfico de tendencias: {str(e)}")
+    
+    # Análisis por departamento
+    st.markdown("**🏢 Métricas por Departamento**")
+    try:
+        dept_metrics = db.get_department_metrics()
+        if not dept_metrics.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig = px.pie(
+                    dept_metrics,
+                    values='total_consultas',
+                    names='departamento',
+                    title="Distribución de Consultas por Departamento"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                fig = px.bar(
+                    dept_metrics,
+                    x='departamento',
+                    y='tiempo_promedio_horas',
+                    title="Tiempo Promedio de Respuesta por Departamento",
+                    color='tiempo_promedio_horas',
+                    color_continuous_scale='rdylgn_r'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hay datos de departamentos disponibles")
+    except Exception as e:
+        st.error(f"Error generando análisis por departamento: {str(e)}")
+
+except Exception as e:
+    st.error(f"❌ Error en el dashboard: {str(e)}")
+    st.info("💡 Sugerencia: Ejecuta el ETL primero para limpiar los datos")
+
+# Footer
+st.markdown("---")
 st.markdown(
-    "<h1 style='color: #f97316; text-align: center;'>📊 Dashboard Ejecutivo</h1>",
-    unsafe_allow_html=True,
+    "**💡 Tip:** Usa el ETL para transformar tus datos crudos en información lista para análisis. "
+    "Ejecuta `1_ETL_Data_Cleaning.ipynb` antes de usar este dashboard."
 )
-st.markdown(
-    "<p style='text-align: center; color: #94a3b8; font-size: 1.1rem;'>"
-    "Métricas y KPIs del Sistema de Atención a Personas</p>",
-    unsafe_allow_html=True,
-)
-
-# Cargar datos (ETL completo)
-df = cargar_y_transformar_datos()
-
-# Sidebar

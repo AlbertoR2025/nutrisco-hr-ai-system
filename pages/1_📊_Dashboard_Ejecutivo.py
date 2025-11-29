@@ -60,7 +60,7 @@ SPREADSHEET_URL = st.sidebar.text_input(
 
 # Cargar datos
 with st.spinner("🔄 Cargando datos desde Google Sheets..."):
-    df = get_hr_data(st.secrets["gcp_service_account"], SPREADSHEET_URL)
+    df = get_hr_data(SPREADSHEET_URL)
 
 # Verificar si hay datos
 if df.empty:

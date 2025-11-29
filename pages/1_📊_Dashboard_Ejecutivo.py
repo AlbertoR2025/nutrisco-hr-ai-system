@@ -12,12 +12,12 @@ import pandas as pd
 # CONFIGURACIÓN DE GOOGLE SHEETS
 # ---------------------------------------------------------
 
-# ID de tu Google Sheet (extraído de la URL)
+# ID de tu Google Sheet
 SHEET_ID = "1JqFay6hXlUuURwZFANmr6FXARZqfH7tI"
-SHEET_GID = "836579878"  # GID de la hoja "Atención 2025"
+SHEET_GID = "836579878"
 
-# URL pública para exportar como CSV
-CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
+# Usar URL de publicación web en lugar de export
+CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid={SHEET_GID}"
 
 
 @st.cache_data(ttl=600)  # Cache por 10 minutos

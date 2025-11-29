@@ -1,5 +1,3 @@
-# Crear database.py corregido
-@"
 import sqlite3
 import pandas as pd
 import os
@@ -9,9 +7,9 @@ class ChatDatabase:
     def __init__(self):
         # EN RENDER: Usar /tmp para persistencia entre reinicios
         if os.getenv('RENDER'):
-            self.db_path = \"/tmp/nutrisco_hr.db\"
+            self.db_path = "/tmp/nutrisco_hr.db"
         else:
-            self.db_path = \"data/nutrisco_hr.db\"
+            self.db_path = "data/nutrisco_hr.db"
         
         # Crear directorio si no existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -23,7 +21,7 @@ class ChatDatabase:
         return conn
     
     def init_db(self):
-        \"\"\"Inicializar base de datos con datos de ejemplo si está vacía\"\"\"
+        """Inicializar base de datos con datos de ejemplo si está vacía"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -62,27 +60,28 @@ class ChatDatabase:
         ''')
         
         # VERIFICAR SI LA BASE ESTÁ VACÍA Y AGREGAR DATOS DE EJEMPLO
-        cursor.execute(\"SELECT COUNT(*) as count FROM consultas_rrhh\")
-        count = cursor.fetchone()['count']
+        cursor.execute("SELECT COUNT(*) as count FROM consultas_rrhh")
+        result = cursor.fetchone()
+        count = result[0] if result else 0
         
         if count == 0:
-            print(\"🔧 Inicializando base de datos con datos de ejemplo...\")
+            print("🔧 Inicializando base de datos con datos de ejemplo...")
             self._insertar_datos_ejemplo(conn)
         
         conn.commit()
         conn.close()
     
     def _insertar_datos_ejemplo(self, conn):
-        \"\"\"Insertar datos de ejemplo para pruebas\"\"\"
+        """Insertar datos de ejemplo para pruebas"""
         cursor = conn.cursor()
         
         # Datos de ejemplo para consultas_rrhh
         consultas_ejemplo = [
-            (\"¿Cómo solicito mis vacaciones?\", \"Puedes solicitar vacaciones through el portal de empleados...\", \"Vacaciones\", False, 5),
-            (\"Necesito ayuda con mi certificado laboral\", \"Los certificados laborales se generan automaticamente...\", \"Documentación\", False, 4),
-            (\"Problema con mi pago\", \"Por favor contacta a nóminas con tu número de empleado...\", \"Nómina\", True, 3),
-            (\"¿Cuáles son los beneficios de salud?\", \"Tenemos cobertura de salud con la aseguradora XYZ...\", \"Beneficios\", False, 5),
-            (\"Quiero actualizar mis datos personales\", \"Puedes actualizar tus datos en el portal del empleado...\", \"Datos Personales\", False, 4)
+            ("¿Cómo solicito mis vacaciones?", "Puedes solicitar vacaciones through el portal de empleados...", "Vacaciones", False, 5),
+            ("Necesito ayuda con mi certificado laboral", "Los certificados laborales se generan automaticamente...", "Documentación", False, 4),
+            ("Problema con mi pago", "Por favor contacta a nóminas con tu número de empleado...", "Nómina", True, 3),
+            ("¿Cuáles son los beneficios de salud?", "Tenemos cobertura de salud con la aseguradora XYZ...", "Beneficios", False, 5),
+            ("Quiero actualizar mis datos personales", "Puedes actualizar tus datos en el portal del empleado...", "Datos Personales", False, 4)
         ]
         
         for consulta, respuesta, categoria, derivado, satisfaccion in consultas_ejemplo:
@@ -93,11 +92,11 @@ class ChatDatabase:
         
         # Datos de ejemplo para base_conocimiento
         conocimiento_ejemplo = [
-            (\"vacaciones\", \"Las vacaciones se solicitan through el portal con 15 días de anticipación\", \"Vacaciones\"),
-            (\"certificado laboral\", \"Los certificados se generan automáticamente cada mes\", \"Documentación\"),
-            (\"pago nómina\", \"La nómina se paga los últimos 5 días hábiles del mes\", \"Nómina\"),
-            (\"beneficios salud\", \"Cobertura médica completa para empleado y familia directa\", \"Beneficios\"),
-            (\"actualizar datos\", \"Los datos personales se actualizan en el portal del empleado\", \"Datos Personales\")
+            ("vacaciones", "Las vacaciones se solicitan through el portal con 15 días de anticipación", "Vacaciones"),
+            ("certificado laboral", "Los certificados se generan automáticamente cada mes", "Documentación"),
+            ("pago nómina", "La nómina se paga los últimos 5 días hábiles del mes", "Nómina"),
+            ("beneficios salud", "Cobertura médica completa para empleado y familia directa", "Beneficios"),
+            ("actualizar datos", "Los datos personales se actualizan en el portal del empleado", "Datos Personales")
         ]
         
         for pregunta, respuesta, categoria in conocimiento_ejemplo:
@@ -108,6 +107,26 @@ class ChatDatabase:
         
         conn.commit()
 
-    # ... (MANTÉN EL RESTO DE TUS MÉTODOS EXISTENTES AQUÍ)
-    # [PEGA AQUÍ EL RESTO DE TUS MÉTODOS ORIGINALES]
-\"\"@ | Out-File -FilePath \"utils/database.py\" -Encoding utf8
+    # Métodos básicos para compatibilidad
+    def obtener_conversaciones(self, limite=1000):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM consultas_rrhh 
+            ORDER BY fecha DESC 
+            LIMIT ?
+        ''', (limite,))
+        resultados = cursor.fetchall()
+        conn.close()
+        return pd.DataFrame(resultados)
+    
+    def detectar_temas_emergentes(self, umbral_frecuencia=5, dias_recientes=7):
+        # Método básico para compatibilidad
+        df = self.obtener_conversaciones()
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Simulación simple de detección de temas
+        temas = df['categoria'].value_counts().reset_index()
+        temas.columns = ['categoria', 'frecuencia_reciente']
+        return temas[temas['frecuencia_reciente'] >= umbral_frecuencia]

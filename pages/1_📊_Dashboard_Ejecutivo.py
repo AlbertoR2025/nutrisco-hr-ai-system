@@ -53,10 +53,14 @@ st.sidebar.header("⚙️ Configuración")
 
 # Credenciales de Google Sheets (usar secrets de Streamlit)
 SPREADSHEET_URL = st.sidebar.text_input(
-    "URL de Google Sheets",
-    value="https://docs.google.com/spreadsheets/d/1JqFay6hXlUuURwZFANmr6FXARZqfH7tI/edit#gid=836579878",
-    help="URL completa de tu Google Sheet de RRHH"
+    "ID de Google Sheets",
+    value="1JqFay6hXlUuURwZFANmr6FXARZqfH7tI",
+    help="ID del Google Sheet de RRHH (solo la parte después de /d/)"
 )
+
+# Cargar datos
+with st.spinner("🔄 Cargando datos desde Google Sheets..."):
+    df = get_hr_data(SPREADSHEET_URL)
 
 # Cargar datos
 with st.spinner("🔄 Cargando datos desde Google Sheets..."):

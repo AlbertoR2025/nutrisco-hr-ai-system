@@ -1,0 +1,25 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.class
+
+# Entornos virtuales
+env/
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Base de datos y archivos sensibles
+data/*.db
+*.sqlite3
+.env
+.env.production
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
